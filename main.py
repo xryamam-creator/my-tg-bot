@@ -49,6 +49,7 @@ def contains_bad_word(text):
 # ======================================================
 
 NEWS_FILE = "news.txt"
+TECH_FILE = "tech.txt"               # новый файл для тех. объявлений
 WHITELIST_FILE = "whitelist_requests.json"
 USERS_FILE = "users.json"
 
@@ -96,6 +97,16 @@ def get_news():
 
 def set_news(text):
     with open(NEWS_FILE, "w", encoding="utf-8") as f:
+        f.write(text)
+
+def get_tech():
+    if os.path.exists(TECH_FILE):
+        with open(TECH_FILE, "r", encoding="utf-8") as f:
+            return f.read().strip()
+    return "Технических объявлений пока нет."
+
+def set_tech(text):
+    with open(TECH_FILE, "w", encoding="utf-8") as f:
         f.write(text)
 
 def save_whitelist_request(user_id, username, name, reason, is_change=False):
@@ -317,7 +328,9 @@ async def cancel_reject(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text("Нет активной операции отклонения.")
 
+# ---------- НОВЫЕ КОМАНДЫ ДЛЯ РАССЫЛКИ ----------
 async def announce(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Отправляет общую новость всем пользователям"""
     if update.effective_user.id != ADMIN_CHAT_ID:
         await update.message.reply_text("⛔ Нет прав.")
         return
@@ -325,7 +338,7 @@ async def announce(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Укажите текст новости. Пример: /announce Текст новости")
         return
     news_text = " ".join(context.args)
-    set_news(news_text)
+    set_news(news_text)  # сохраняем
     users = get_users()
     if not users:
         await update.message.reply_text("❌ Нет пользователей для рассылки.")
@@ -346,6 +359,36 @@ async def announce(update: Update, context: ContextTypes.DEFAULT_TYPE):
             print(f"Не удалось отправить пользователю {uid}: {e}")
     await update.message.reply_text(f"✅ Новость сохранена и разослана {sent} пользователям. Неудачно: {failed}.")
 
+async def tech(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Отправляет техническое объявление всем пользователям"""
+    if update.effective_user.id != ADMIN_CHAT_ID:
+        await update.message.reply_text("⛔ Нет прав.")
+        return
+    if not context.args:
+        await update.message.reply_text("❌ Укажите текст тех. объявления. Пример: /tech Текст объявления")
+        return
+    tech_text = " ".join(context.args)
+    set_tech(tech_text)  # сохраняем
+    users = get_users()
+    if not users:
+        await update.message.reply_text("❌ Нет пользователей для рассылки.")
+        return
+    sent = 0
+    failed = 0
+    for uid in users:
+        try:
+            await context.bot.send_message(
+                chat_id=uid,
+                text=f"🛠 *ТЕХНИЧЕСКОЕ ОБЪЯВЛЕНИЕ!*\n\n{tech_text}",
+                parse_mode="Markdown"
+            )
+            sent += 1
+            await asyncio.sleep(0.05)
+        except Exception as e:
+            failed += 1
+            print(f"Не удалось отправить пользователю {uid}: {e}")
+    await update.message.reply_text(f"✅ Тех. объявление сохранено и разослано {sent} пользователям. Неудачно: {failed}.")
+
 # ======================================================
 # 7. ПОКАЗ МЕНЮ И ОБРАБОТЧИК КНОПОК
 # ======================================================
@@ -353,6 +396,7 @@ async def announce(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def show_main_menu(target, user=None):
     keyboard = [
         [InlineKeyboardButton("📢 Новости", callback_data="news")],
+        [InlineKeyboardButton("🛠 Тех. часть", callback_data="tech")],   # новая кнопка
         [InlineKeyboardButton("🎫 Создать тикет", callback_data="ticket")],
         [InlineKeyboardButton("📝 Заявка в вайтлист", callback_data="whitelist")],
         [InlineKeyboardButton("🌐 IP сервера", callback_data="ip")],
@@ -379,6 +423,14 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data="back_to_menu")]]
         await query.edit_message_text(
             f"📰 *Новости:*\n\n{news_text}",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode="Markdown"
+        )
+    elif data == "tech":
+        tech_text = get_tech()
+        keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data="back_to_menu")]]
+        await query.edit_message_text(
+            f"🛠 *Техническая часть:*\n\n{tech_text}",
             reply_markup=InlineKeyboardMarkup(keyboard),
             parse_mode="Markdown"
         )
@@ -520,7 +572,7 @@ async def whitelist_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 # ======================================================
-# 10. КОМАНДЫ ДЛЯ АДМИНА (ПРОСМОТР ЗАЯВОК, ОБНОВЛЕНИЕ НОВОСТЕЙ)
+# 10. КОМАНДЫ ДЛЯ АДМИНА
 # ======================================================
 
 async def view_requests(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -576,6 +628,7 @@ def main():
     application.add_handler(CommandHandler("view_requests", view_requests))
     application.add_handler(CommandHandler("cancel", cancel_reject))
     application.add_handler(CommandHandler("announce", announce))
+    application.add_handler(CommandHandler("tech", tech))   # новая команда
 
     conv_handler = ConversationHandler(
         entry_points=[CallbackQueryHandler(whitelist_entry, pattern="^whitelist$")],
@@ -590,7 +643,7 @@ def main():
     )
     application.add_handler(conv_handler)
 
-    application.add_handler(CallbackQueryHandler(button_handler, pattern="^(news|ticket|ip|back_to_menu|cancel_whitelist)$"))
+    application.add_handler(CallbackQueryHandler(button_handler, pattern="^(news|tech|ticket|ip|back_to_menu|cancel_whitelist)$"))
     application.add_handler(CallbackQueryHandler(handle_decision, pattern="^(approve|reject)_"))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_reject_reason))
 
