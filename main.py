@@ -7,20 +7,23 @@ from dotenv import load_dotenv
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes, ConversationHandler, MessageHandler, filters
 
-# ---------- ЗАГРУЖАЕМ ТОКЕН ИЗ ФАЙЛА .env ----------
+# ---------- ЗАГРУЖАЕМ ТОКЕН ИЗ ПЕРЕМЕННЫХ ОКРУЖЕНИЯ ----------
 load_dotenv()
 TOKEN = os.getenv('BOT_TOKEN')
+if not TOKEN:
+    raise ValueError("BOT_TOKEN не задан")
 
-# ---------- ВАШ ТЕЛЕГРАМ ID (для уведомлений) ----------
-ADMIN_CHAT_ID = 1071217435  # ← ЗДЕСЬ ВСТАВЬТЕ СВОЙ ID (без кавычек)
+# ---------- ВАШ ТЕЛЕГРАМ ID (узнайте через @userinfobot) ----------
+ADMIN_CHAT_ID = 1071217435  # Ваш ID
 
-# ---------- СОСТОЯНИЯ ДЛЯ ЗАЯВКИ ----------
+# ---------- СОСТОЯНИЯ ДЛЯ ДИАЛОГА ЗАЯВКИ ----------
 NAME, REASON = range(2)
 
-# ---------- ФУНКЦИИ ДЛЯ РАБОТЫ С ФАЙЛАМИ ----------
+# ---------- ПУТИ К ФАЙЛАМ ----------
 NEWS_FILE = "news.txt"
 WHITELIST_FILE = "whitelist_requests.json"
 
+# ---------- ФУНКЦИИ ДЛЯ РАБОТЫ С НОВОСТЯМИ ----------
 def get_news():
     if os.path.exists(NEWS_FILE):
         with open(NEWS_FILE, "r", encoding="utf-8") as f:
@@ -31,6 +34,7 @@ def set_news(text):
     with open(NEWS_FILE, "w", encoding="utf-8") as f:
         f.write(text)
 
+# ---------- ФУНКЦИЯ ДЛЯ СОХРАНЕНИЯ ЗАЯВКИ ----------
 def save_whitelist_request(user_id, username, name, reason):
     data = {
         "user_id": user_id,
@@ -47,10 +51,15 @@ def save_whitelist_request(user_id, username, name, reason):
     requests.append(data)
     with open(WHITELIST_FILE, "w", encoding="utf-8") as f:
         json.dump(requests, f, ensure_ascii=False, indent=2)
+    print(f"✅ Заявка сохранена: {data}")
 
-# ---------- ОТПРАВКА УВЕДОМЛЕНИЙ АДМИНУ ----------
+# ---------- УВЕДОМЛЕНИЕ АДМИНИСТРАТОРУ ----------
 async def notify_admin(context: ContextTypes.DEFAULT_TYPE, text: str):
-    await context.bot.send_message(chat_id=ADMIN_CHAT_ID, text=text)
+    try:
+        await context.bot.send_message(chat_id=ADMIN_CHAT_ID, text=text, parse_mode="Markdown")
+        print("✅ Уведомление отправлено админу")
+    except Exception as e:
+        print(f"❌ Ошибка отправки уведомления: {e}")
 
 # ---------- КОМАНДА /START ----------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -58,7 +67,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("📢 Новости", callback_data="news")],
         [InlineKeyboardButton("🎫 Создать тикет", callback_data="ticket")],
         [InlineKeyboardButton("📝 Заявка в вайтлист", callback_data="whitelist")],
-        [InlineKeyboardButton("🌐 IP сервера", callback_data="193.39.168.179:30012")],
+        [InlineKeyboardButton("🌐 IP сервера", callback_data="ip")],
         [InlineKeyboardButton("🔗 Ссылка на Discord", url="https://discord.gg/JWrnSCq9H")],
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -72,7 +81,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-
     data = query.data
 
     if data == "news":
@@ -86,7 +94,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     elif data == "ip":
         await query.edit_message_text(
-            "🌐 *IP сервера:*\n`192.168.1.100:7777`",
+            "🌐 *IP сервера:*\n`193.39.168.179:30012`",
             parse_mode="Markdown"
         )
         keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data="back_to_menu")]]
@@ -94,13 +102,13 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     elif data == "ticket":
         user = query.from_user
-        await notify_admin(
-            context,
+        text = (
             f"🎫 *Новый тикет!*\n"
             f"От: {user.mention_html()} (@{user.username or 'нет username'})\n"
             f"ID: `{user.id}`\n"
             f"Создан: {datetime.now().strftime('%d.%m.%Y %H:%M')}"
         )
+        await notify_admin(context, text)
         await query.edit_message_text(
             "✅ *Тикет создан!*\n\nАдминистратор уведомлён.",
             parse_mode="Markdown"
@@ -113,7 +121,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "📝 *Заявка в вайтлист*\n\nВведите ваш игровой никнейм:",
             parse_mode="Markdown"
         )
-        return ConversationHandler.END
 
     elif data == "back_to_menu":
         await show_menu(query)
@@ -124,7 +131,7 @@ async def show_menu(query):
         [InlineKeyboardButton("🎫 Создать тикет", callback_data="ticket")],
         [InlineKeyboardButton("📝 Заявка в вайтлист", callback_data="whitelist")],
         [InlineKeyboardButton("🌐 IP сервера", callback_data="ip")],
-        [InlineKeyboardButton("🔗 Ссылка на Discord", url="https://discord.gg/ВАША_ССЫЛКА")],
+        [InlineKeyboardButton("🔗 Ссылка на Discord", url="https://discord.gg/JWrnSCq9H")],
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     await query.edit_message_text(
@@ -133,7 +140,7 @@ async def show_menu(query):
         parse_mode="Markdown"
     )
 
-# ---------- ДИАЛОГ ДЛЯ ЗАЯВКИ В ВАЙТЛИСТ ----------
+# ---------- ДИАЛОГ ЗАЯВКИ В ВАЙТЛИСТ ----------
 async def whitelist_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Введите ваш игровой никнейм:")
     return NAME
@@ -150,24 +157,23 @@ async def whitelist_reason(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     save_whitelist_request(user.id, user.username or "без username", name, reason)
 
-    await notify_admin(
-        context,
+    text = (
         f"📝 *Новая заявка в вайтлист!*\n"
         f"От: @{user.username or 'нет username'}\n"
         f"Игровой ник: `{name}`\n"
         f"Причина: {reason}\n"
         f"Дата: {datetime.now().strftime('%d.%m.%Y %H:%M')}"
     )
+    await notify_admin(context, text)
 
     await update.message.reply_text("✅ Заявка отправлена!")
 
-    # Показываем главное меню
     keyboard = [
         [InlineKeyboardButton("📢 Новости", callback_data="news")],
         [InlineKeyboardButton("🎫 Создать тикет", callback_data="ticket")],
         [InlineKeyboardButton("📝 Заявка в вайтлист", callback_data="whitelist")],
         [InlineKeyboardButton("🌐 IP сервера", callback_data="ip")],
-        [InlineKeyboardButton("🔗 Ссылка на Discord", url="https://discord.gg/ВАША_ССЫЛКА")],
+        [InlineKeyboardButton("🔗 Ссылка на Discord", url="https://discord.gg/JWrnSCq9H")],
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     await update.message.reply_text(
@@ -181,7 +187,7 @@ async def whitelist_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("❌ Отменено.")
     return ConversationHandler.END
 
-# ---------- КОМАНДА ДЛЯ ОБНОВЛЕНИЯ НОВОСТЕЙ ----------
+# ---------- КОМАНДА ОБНОВЛЕНИЯ НОВОСТЕЙ ----------
 async def update_news(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_CHAT_ID:
         await update.message.reply_text("⛔ Нет прав.")
@@ -193,7 +199,7 @@ async def update_news(update: Update, context: ContextTypes.DEFAULT_TYPE):
     set_news(new_text)
     await update.message.reply_text(f"✅ Новости обновлены!")
 
-# ---------- КОМАНДА ДЛЯ ПРОСМОТРА ЗАЯВОК ----------
+# ---------- КОМАНДА ПРОСМОТРА ЗАЯВОК ----------
 async def view_requests(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_CHAT_ID:
         await update.message.reply_text("⛔ Нет прав.")
@@ -230,6 +236,7 @@ def main():
         fallbacks=[CommandHandler("cancel", whitelist_cancel)],
     )
     application.add_handler(conv_handler)
+
     application.add_handler(CallbackQueryHandler(button_handler, pattern="^(news|ticket|ip|back_to_menu)$"))
 
     application.run_polling(allowed_updates=["message", "callback_query"])
