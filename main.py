@@ -180,8 +180,10 @@ async def whitelist_reason(update: Update, context: ContextTypes.DEFAULT_TYPE):
     reason = update.message.text
     user = update.effective_user
 
+    # Сохраняем заявку
     save_whitelist_request(user.id, user.username or "без username", name, reason)
 
+    # Формируем текст уведомления
     text = (
         f"📝 *Новая заявка в вайтлист!*\n"
         f"От: @{user.username or 'нет username'}\n"
@@ -189,6 +191,9 @@ async def whitelist_reason(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"Причина: {reason}\n"
         f"Дата: {datetime.now().strftime('%d.%m.%Y %H:%M')}"
     )
+
+    # Отправляем уведомление админу с явным логированием
+    print(f"🔔 Отправляю уведомление админу {ADMIN_CHAT_ID}: {text}")
     await notify_admin(context, text)
 
     await update.message.reply_text("✅ Заявка отправлена!")
@@ -250,7 +255,6 @@ async def view_requests(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text += f"   {req.get('reason', '')}\n"
         text += f"   {req.get('date', '')}\n\n"
     
-    # Если текст слишком длинный, разбиваем
     if len(text) > 4000:
         for chunk in [text[i:i+4000] for i in range(0, len(text), 4000)]:
             await update.message.reply_text(chunk, parse_mode="Markdown")
@@ -264,12 +268,10 @@ async def view_requests(update: Update, context: ContextTypes.DEFAULT_TYPE):
 def main():
     application = Application.builder().token(TOKEN).build()
 
-    # Регистрируем команды
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("update_news", update_news))
     application.add_handler(CommandHandler("view_requests", view_requests))
 
-    # ConversationHandler для заявки в вайтлист (без per_message, чтобы не было ошибок)
     conv_handler = ConversationHandler(
         entry_points=[CallbackQueryHandler(button_handler, pattern="^whitelist$")],
         states={
@@ -280,10 +282,8 @@ def main():
     )
     application.add_handler(conv_handler)
 
-    # Обработчик остальных кнопок
     application.add_handler(CallbackQueryHandler(button_handler, pattern="^(news|ticket|ip|back_to_menu)$"))
 
-    # Запускаем бота
     print("🚀 Бот запущен и готов к работе!")
     application.run_polling(allowed_updates=["message", "callback_query"])
 
