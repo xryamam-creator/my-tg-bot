@@ -12,7 +12,7 @@ load_dotenv()
 TOKEN = os.getenv('BOT_TOKEN')
 
 # ---------- ВАШ ТЕЛЕГРАМ ID (для уведомлений) ----------
-ADMIN_CHAT_ID = 123456789  # ← ЗДЕСЬ ВСТАВЬТЕ СВОЙ ID (без кавычек)
+ADMIN_CHAT_ID = 1071217435  # ← ЗДЕСЬ ВСТАВЬТЕ СВОЙ ID (без кавычек)
 
 # ---------- СОСТОЯНИЯ ДЛЯ ЗАЯВКИ ----------
 NAME, REASON = range(2)
@@ -58,8 +58,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("📢 Новости", callback_data="news")],
         [InlineKeyboardButton("🎫 Создать тикет", callback_data="ticket")],
         [InlineKeyboardButton("📝 Заявка в вайтлист", callback_data="whitelist")],
-        [InlineKeyboardButton("🌐 IP сервера", callback_data="ip")],
-        [InlineKeyboardButton("🔗 Ссылка на Discord", url="https://discord.gg/ВАША_ССЫЛКА")],
+        [InlineKeyboardButton("🌐 IP сервера", callback_data="193.39.168.179:30012")],
+        [InlineKeyboardButton("🔗 Ссылка на Discord", url="https://discord.gg/JWrnSCq9H")],
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     await update.message.reply_text(
