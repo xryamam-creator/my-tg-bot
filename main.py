@@ -4,6 +4,25 @@ import os
 from datetime import datetime
 from dotenv import load_dotenv
 
+# ----- БЛОК ДЛЯ ПОДАВЛЕНИЯ ПРЕДУПРЕЖДЕНИЙ -----
+import warnings
+from telegram.warnings import PTBUserWarning
+warnings.filterwarnings("ignore", message="If 'per_message=False'", category=PTBUserWarning)
+# -----------------------------------------------
+
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes, ConversationHandler, MessageHandler, filters
+
+# ---------- ЗАГРУЖАЕМ ТОКЕН ИЗ ПЕРЕМЕННЫХ ОКРУЖЕНИЯ ----------
+load_dotenv()
+TOKEN = os.getenv('BOT_TOKEN')
+# ... остальной код
+import asyncio
+import json
+import os
+from datetime import datetime
+from dotenv import load_dotenv
+
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes, ConversationHandler, MessageHandler, filters
 
