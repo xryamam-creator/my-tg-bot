@@ -25,6 +25,24 @@ ADMIN_CHAT_ID = 1071217435           # Ваш Telegram ID
 SERVER_IP = "193.39.168.179:30012"
 DISCORD_LINK = "https://discord.gg/JWrnSCq9H"
 
+# ---------- СПИСОК ЗАПРЕЩЁННЫХ СЛОВ ----------
+# Добавьте сюда слова, которые считаете оскорбительными (русские и английские)
+BAD_WORDS = [
+    "хуй", "пизда", "бля", "ебан", "залуп", "гандон", "мудила", "петух", "пидор",
+    "лох", "шлюха", "курва", "сука", "ублюд", "сволочь", "тварь", "выродок",
+    "fuck", "shit", "cunt", "dick", "asshole", "bastard", "whore", "slut", "bitch"
+]
+
+def contains_bad_word(text):
+    """Проверяет, содержит ли текст любое запрещённое слово (регистронезависимо)."""
+    if not text:
+        return False
+    text_lower = text.lower()
+    for word in BAD_WORDS:
+        if word in text_lower:
+            return True
+    return False
+
 # ======================================================
 # 2. СОСТОЯНИЯ ДИАЛОГА
 # ======================================================
@@ -162,7 +180,7 @@ async def notify_admin_with_buttons(context: ContextTypes.DEFAULT_TYPE, user, na
     )
 
 # ======================================================
-# 5. ОБРАБОТКА РЕШЕНИЯ АДМИНА (ИСПРАВЛЕННАЯ)
+# 5. ОБРАБОТКА РЕШЕНИЯ АДМИНА
 # ======================================================
 
 async def handle_decision(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -172,7 +190,6 @@ async def handle_decision(update: Update, context: ContextTypes.DEFAULT_TYPE):
     action, index_str = data.split('_')
     index = int(index_str)
 
-    # Получаем данные заявки
     try:
         with open(WHITELIST_FILE, "r", encoding="utf-8") as f:
             requests = json.load(f)
@@ -189,8 +206,7 @@ async def handle_decision(update: Update, context: ContextTypes.DEFAULT_TYPE):
     name = request_data["name"]
     is_change = request_data.get("is_change", False)
 
-    # Проверяем, не обработана ли уже эта заявка (чтобы избежать повторных нажатий)
-    if request_data["status"] != "pending" and request_data["status"] != "change_request":
+    if request_data["status"] not in ["pending", "change_request"]:
         await query.edit_message_text(
             text=query.message.text + "\n\n⚠️ Эта заявка уже была обработана.",
             parse_mode="Markdown",
@@ -204,17 +220,14 @@ async def handle_decision(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 update_request_status(index, "approved")
                 user_message = f"✅ Ваш ник в вайтлисте обновлён на `{name}`!"
             else:
-                # Если не найдено approved заявки, просто одобряем как новую
                 update_request_status(index, "approved")
                 user_message = f"✅ Вы добавлены в вайтлист под ником `{name}`!"
         else:
             update_request_status(index, "approved")
             user_message = f"✅ *Поздравляем!* Вы добавлены в вайтлист под ником `{name}`.\nДобро пожаловать на сервер! 🎉"
         
-        # Отправляем пользователю
         try:
             await context.bot.send_message(chat_id=user_id, text=user_message, parse_mode="Markdown")
-            # Обновляем сообщение админа, убираем кнопки
             await query.edit_message_text(
                 text=query.message.text + f"\n\n✅ Заявка **одобрена**!{' Ник обновлён.' if is_change else ''}",
                 parse_mode="Markdown",
@@ -383,11 +396,22 @@ async def whitelist_entry(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return NAME
 
 # ======================================================
-# 10. ДИАЛОГ ЗАЯВКИ
+# 10. ДИАЛОГ ЗАЯВКИ (С ФИЛЬТРОМ ОСКОРБЛЕНИЙ)
 # ======================================================
 
 async def whitelist_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data["whitelist_name"] = update.message.text
+    name = update.message.text.strip()
+    if not name:
+        await update.message.reply_text("❌ Никнейм не может быть пустым. Попробуйте снова:")
+        return NAME
+    if contains_bad_word(name):
+        await update.message.reply_text(
+            "🚫 *Обнаружены недопустимые слова в никнейме!*\n"
+            "Пожалуйста, используйте корректный никнейм без оскорблений.",
+            parse_mode="Markdown"
+        )
+        return NAME
+    context.user_data["whitelist_name"] = name
     keyboard = [[InlineKeyboardButton("❌ Отмена", callback_data="cancel_whitelist")]]
     if context.user_data.get("is_change", False):
         await update.message.reply_text(
@@ -402,8 +426,19 @@ async def whitelist_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return REASON
 
 async def whitelist_reason(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    reason = update.message.text.strip()
+    if not reason:
+        await update.message.reply_text("❌ Причина не может быть пустой. Попробуйте снова:")
+        return REASON
+    if contains_bad_word(reason):
+        await update.message.reply_text(
+            "🚫 *Обнаружены недопустимые слова в причине!*\n"
+            "Пожалуйста, переформулируйте причину без оскорблений.",
+            parse_mode="Markdown"
+        )
+        return REASON
+
     name = context.user_data["whitelist_name"]
-    reason = update.message.text
     user = update.effective_user
     is_change = context.user_data.get("is_change", False)
 
