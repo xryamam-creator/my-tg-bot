@@ -241,12 +241,11 @@ async def handle_ticket_decision(update: Update, context: ContextTypes.DEFAULT_T
         except: pass
 
 async def handle_ticket_reject_reason(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Явно проверяем, что это админ и есть активный ключ
     if update.effective_user.id != ADMIN_CHAT_ID:
         return
     if 'pending_ticket_reject' not in context.user_data:
         return
-    print("🟣 handle_ticket_reject_reason вызвана")  # лог
+    print("🟣 handle_ticket_reject_reason вызвана")
     ticket_id = context.user_data.pop('pending_ticket_reject')
     reason_text = update.message.text.strip()
     if not reason_text:
@@ -314,7 +313,7 @@ async def handle_reject_reason(update: Update, context: ContextTypes.DEFAULT_TYP
         return
     if 'pending_reject_index' not in context.user_data:
         return
-    print("🟣 handle_reject_reason вызвана")  # лог
+    print("🟣 handle_reject_reason вызвана")
     index = context.user_data.pop('pending_reject_index')
     reason_text = update.message.text.strip()
     if not reason_text:
@@ -413,7 +412,7 @@ async def whitelist_entry(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ========== ДИАЛОГ ТИКЕТА ==========
 async def ticket_reason(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    print("🟢 ticket_reason вызвана")  # лог
+    print("🟢 ticket_reason вызвана")
     add_user(update.effective_user.id)
     reason_text = update.message.text.strip()
     if not reason_text:
@@ -454,7 +453,7 @@ async def ticket_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ========== ДИАЛОГ ВАЙТЛИСТА ==========
 async def whitelist_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    print("🟢 whitelist_name вызвана")  # лог
+    print("🟢 whitelist_name вызвана")
     add_user(update.effective_user.id)
     name = update.message.text.strip()
     if not name:
@@ -472,7 +471,7 @@ async def whitelist_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return REASON
 
 async def whitelist_reason(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    print("🟢 whitelist_reason вызвана")  # лог
+    print("🟢 whitelist_reason вызвана")
     add_user(update.effective_user.id)
     reason = update.message.text.strip()
     if not reason:
@@ -616,7 +615,13 @@ async def update_news(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ========== ЗАПУСК ==========
 def main():
-    application = Application.builder().token(TOKEN).build()
+    application = (
+        Application.builder()
+        .token(TOKEN)
+        .connect_timeout(30.0)
+        .read_timeout(30.0)
+        .build()
+    )
 
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("menu", menu))
@@ -660,17 +665,20 @@ def main():
     )
     application.add_handler(conv_ticket)
 
-    # Остальные кнопки (не конфликтуют с entry_points)
+    # Остальные кнопки
     application.add_handler(CallbackQueryHandler(button_handler, pattern="^(news|ip|back_to_menu)$"))
     # Решения админа
     application.add_handler(CallbackQueryHandler(handle_whitelist_decision, pattern="^(approve|reject)_"))
     application.add_handler(CallbackQueryHandler(handle_ticket_decision, pattern="^ticket_(accept|reject)_"))
-    # Причины отклонений (должны быть самыми последними, чтобы не перехватывать)
+    # Причины отклонений
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_reject_reason))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_ticket_reject_reason))
 
     print("🚀 Бот запущен и готов к работе!")
-    application.run_polling(allowed_updates=["message", "callback_query"])
+    try:
+        application.run_polling(allowed_updates=["message", "callback_query"])
+    except Exception as e:
+        print(f"❌ Ошибка при работе бота: {e}")
 
 if __name__ == "__main__":
     main()
