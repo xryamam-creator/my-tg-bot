@@ -32,6 +32,9 @@ BAD_WORDS = [
     "fuck", "shit", "cunt", "dick", "asshole", "bastard", "whore", "slut", "bitch"
 ]
 
+# ---------- СОСТОЯНИЯ ДЛЯ ДИАЛОГА ----------
+NAME, REASON = range(2)
+
 def contains_bad_word(text):
     if not text:
         return False
@@ -163,7 +166,7 @@ async def notify_admin_with_buttons(context: ContextTypes.DEFAULT_TYPE, user, na
     )
 
 # ======================================================
-# 4. ОБРАБОТКА РЕШЕНИЯ АДМИНА (ИСПРАВЛЕННАЯ)
+# 4. ОБРАБОТКА РЕШЕНИЯ АДМИНА
 # ======================================================
 
 async def handle_decision(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -185,7 +188,6 @@ async def handle_decision(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if request_data["status"] not in ["pending", "change_request"]:
         await query.message.reply_text("⚠️ Эта заявка уже была обработана.")
-        # Убираем кнопки у исходного сообщения
         try:
             await query.edit_message_reply_markup(reply_markup=None)
         except:
@@ -209,26 +211,23 @@ async def handle_decision(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.message.reply_text(f"✅ Заявка одобрена. Пользователь уведомлён.")
         except Exception as e:
             await query.message.reply_text(f"✅ Заявка одобрена, но не удалось уведомить пользователя (ошибка: {e})")
-        # Убираем кнопки
         try:
             await query.edit_message_reply_markup(reply_markup=None)
         except:
             pass
 
     elif action == "reject":
-        # Сохраняем индекс и просим причину
         context.user_data['pending_reject_index'] = index
         await query.message.reply_text(
             "Введите причину отклонения для пользователя (или отправьте /cancel, чтобы отменить)."
         )
-        # Убираем кнопки у исходного сообщения
         try:
             await query.edit_message_reply_markup(reply_markup=None)
         except:
             pass
 
 # ======================================================
-# 5. ОБРАБОТЧИК ПРИЧИНЫ ОТКЛОНЕНИЯ (ОТ АДМИНА)
+# 5. ОБРАБОТЧИК ПРИЧИНЫ ОТКЛОНЕНИЯ
 # ======================================================
 
 async def handle_reject_reason(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -244,7 +243,6 @@ async def handle_reject_reason(update: Update, context: ContextTypes.DEFAULT_TYP
         context.user_data['pending_reject_index'] = index
         return
 
-    # Обновляем заявку с причиной отклонения
     update_request_status(index, "rejected", reject_reason=reason_text)
     requests = get_requests()
     if index >= len(requests):
@@ -457,7 +455,7 @@ async def whitelist_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 # ======================================================
-# 10. КОМАНДЫ ДЛЯ АДМИНА (ПРОСМОТР ЗАЯВОК, ОБНОВЛЕНИЕ НОВОСТЕЙ)
+# 10. КОМАНДЫ ДЛЯ АДМИНА
 # ======================================================
 
 async def view_requests(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -513,7 +511,6 @@ def main():
     application.add_handler(CommandHandler("view_requests", view_requests))
     application.add_handler(CommandHandler("cancel", cancel_reject))
 
-    # ConversationHandler для заявки
     conv_handler = ConversationHandler(
         entry_points=[CallbackQueryHandler(whitelist_entry, pattern="^whitelist$")],
         states={
