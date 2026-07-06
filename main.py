@@ -9,7 +9,7 @@ from telegram.warnings import PTBUserWarning
 warnings.filterwarnings("ignore", category=PTBUserWarning)
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes, ConversationHandler, MessageHandler, filters
+from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes, MessageHandler, filters
 
 # ========== КОНФИГ ==========
 load_dotenv()
@@ -20,10 +20,6 @@ if not TOKEN:
 ADMIN_CHAT_ID = 1071217435
 SERVER_IP = "193.39.168.179:30012"
 DISCORD_LINK = "https://discord.gg/JWrnSCq9H"
-
-# Состояния для диалогов
-NAME, REASON = range(2)
-TICKET_REASON, TICKET_CONFIRM = range(2, 4)
 
 # Запрещённые слова
 BAD_WORDS = ["хуй", "пизда", "бля", "ебан", "залуп", "гандон", "мудила", "петух", "пидор",
@@ -245,7 +241,6 @@ async def handle_ticket_reject_reason(update: Update, context: ContextTypes.DEFA
         return
     if 'pending_ticket_reject' not in context.user_data:
         return
-    print("🟣 handle_ticket_reject_reason вызвана")
     ticket_id = context.user_data.pop('pending_ticket_reject')
     reason_text = update.message.text.strip()
     if not reason_text:
@@ -313,7 +308,6 @@ async def handle_reject_reason(update: Update, context: ContextTypes.DEFAULT_TYP
         return
     if 'pending_reject_index' not in context.user_data:
         return
-    print("🟣 handle_reject_reason вызвана")
     index = context.user_data.pop('pending_reject_index')
     reason_text = update.message.text.strip()
     if not reason_text:
@@ -349,7 +343,7 @@ async def show_main_menu(target, user=None):
     else:
         await target.reply_text(text, reply_markup=reply_markup, parse_mode="Markdown")
 
-# ========== ОБРАБОТЧИК КНОПОК (кроме ticket и whitelist) ==========
+# ========== ОБРАБОТЧИК КНОПОК ==========
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     try: await query.answer()
@@ -364,147 +358,130 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data == "ip":
         keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data="back_to_menu")]]
         await query.edit_message_text(f"🌐 *IP сервера:*\n`{SERVER_IP}`", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
+    elif data == "ticket":
+        # Начинаем процесс создания тикета
+        context.user_data['expecting'] = 'ticket_reason'
+        keyboard = [[InlineKeyboardButton("❌ Отмена", callback_data="cancel_ticket")]]
+        await query.edit_message_text("✏️ *Создание тикета*\n\nОпишите причину обращения (или нажмите Отмена):", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
+    elif data == "whitelist":
+        # Начинаем процесс заявки в вайтлист
+        user = query.from_user
+        user_id = user.id
+        # Проверяем, есть ли уже pending заявка
+        last_req = get_last_user_request(user_id)
+        if last_req and last_req["status"] == "pending":
+            await query.edit_message_text("⏳ *У вас уже есть заявка на рассмотрении!*", parse_mode="Markdown")
+            keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data="back_to_menu")]]
+            await query.edit_message_reply_markup(reply_markup=InlineKeyboardMarkup(keyboard))
+            return
+        if is_user_approved(user_id):
+            current_name = get_user_current_name(user_id)
+            context.user_data['expecting'] = 'whitelist_new_name'
+            context.user_data['is_change'] = True
+            keyboard = [[InlineKeyboardButton("❌ Отмена", callback_data="cancel_whitelist")]]
+            await query.edit_message_text(f"✏️ *Вы уже в вайтлисте* (текущий ник: `{current_name}`).\nВведите **новый никнейм** для изменения:", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
+        else:
+            context.user_data['expecting'] = 'whitelist_name'
+            context.user_data['is_change'] = False
+            keyboard = [[InlineKeyboardButton("❌ Отмена", callback_data="cancel_whitelist")]]
+            await query.edit_message_text("📝 *Заявка в вайтлист*\n\nВведите ваш игровой никнейм:", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
     elif data == "back_to_menu":
+        context.user_data.clear()
+        await show_main_menu(query)
+    elif data == "cancel_ticket":
+        context.user_data.pop('expecting', None)
+        await query.edit_message_text("❌ Создание тикета отменено.")
+        await show_main_menu(query)
+    elif data == "cancel_whitelist":
+        context.user_data.pop('expecting', None)
+        await query.edit_message_text("❌ Заявка отменена.")
         await show_main_menu(query)
 
-# ========== ВХОДНЫЕ ТОЧКИ ДЛЯ ДИАЛОГОВ ==========
-async def ticket_entry(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    try: await query.answer()
-    except: pass
-    add_user(query.from_user.id)
-    context.user_data.pop('ticket_reason', None)
-    keyboard = [[InlineKeyboardButton("❌ Отмена", callback_data="cancel_ticket")]]
-    await query.edit_message_text("✏️ *Создание тикета*\n\nОпишите причину обращения:", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
-    print("🔵 ticket_entry вызвана, возвращаем TICKET_REASON")
-    return TICKET_REASON
+# ========== ОБРАБОТЧИК ТЕКСТОВЫХ СООБЩЕНИЙ ==========
+async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    text = update.message.text.strip()
+    expecting = context.user_data.get('expecting')
+    print(f"📩 Получено сообщение от {user.id}, expecting={expecting}")
 
-async def whitelist_entry(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    try: await query.answer()
-    except: pass
-    user = query.from_user
-    user_id = user.id
-    add_user(user_id)
-    context.user_data.pop('whitelist_name', None)
-    context.user_data.pop('is_change', None)
-
-    last_req = get_last_user_request(user_id)
-    if last_req and last_req["status"] == "pending":
-        await query.edit_message_text("⏳ *У вас уже есть заявка на рассмотрении!*", parse_mode="Markdown")
-        keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data="back_to_menu")]]
-        await query.edit_message_reply_markup(reply_markup=InlineKeyboardMarkup(keyboard))
-        return ConversationHandler.END
-
-    if is_user_approved(user_id):
-        current_name = get_user_current_name(user_id)
+    if expecting == 'ticket_reason':
+        if not text:
+            await update.message.reply_text("❌ Причина не может быть пустой. Напишите текст:")
+            return
+        context.user_data['ticket_reason'] = text
+        context.user_data['expecting'] = None  # сбрасываем ожидание
+        keyboard = [[InlineKeyboardButton("✅ Да, создать", callback_data="confirm_ticket"),
+                     InlineKeyboardButton("❌ Нет, отмена", callback_data="cancel_ticket")]]
+        await update.message.reply_text(f"✏️ *Вы ввели причину:*\n{text}\n\nПодтвердите создание тикета:", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
+    elif expecting == 'whitelist_name':
+        if not text:
+            await update.message.reply_text("❌ Никнейм не может быть пустым. Попробуйте снова:")
+            return
+        if contains_bad_word(text):
+            await update.message.reply_text("🚫 *Обнаружены недопустимые слова в никнейме!*", parse_mode="Markdown")
+            return
+        context.user_data['whitelist_name'] = text
+        context.user_data['expecting'] = 'whitelist_reason'
         keyboard = [[InlineKeyboardButton("❌ Отмена", callback_data="cancel_whitelist")]]
-        await query.edit_message_text(f"✏️ *Вы уже в вайтлисте* (текущий ник: `{current_name}`).\nВведите **новый никнейм** для изменения:", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
-        context.user_data["is_change"] = True
-        print("🔵 whitelist_entry вызвана (изменение), возвращаем NAME")
-        return NAME
+        await update.message.reply_text("Напишите причину (или нажмите Отмена):", reply_markup=InlineKeyboardMarkup(keyboard))
+    elif expecting == 'whitelist_new_name':
+        if not text:
+            await update.message.reply_text("❌ Никнейм не может быть пустым. Попробуйте снова:")
+            return
+        if contains_bad_word(text):
+            await update.message.reply_text("🚫 *Обнаружены недопустимые слова в никнейме!*", parse_mode="Markdown")
+            return
+        context.user_data['whitelist_name'] = text
+        context.user_data['expecting'] = 'whitelist_new_reason'
+        keyboard = [[InlineKeyboardButton("❌ Отмена", callback_data="cancel_whitelist")]]
+        await update.message.reply_text("Напишите **причину изменения ника** (или нажмите Отмена):", reply_markup=InlineKeyboardMarkup(keyboard))
+    elif expecting == 'whitelist_reason' or expecting == 'whitelist_new_reason':
+        if not text:
+            await update.message.reply_text("❌ Причина не может быть пустой. Попробуйте снова:")
+            return
+        if contains_bad_word(text):
+            await update.message.reply_text("🚫 *Обнаружены недопустимые слова в причине!*", parse_mode="Markdown")
+            return
+        name = context.user_data.get('whitelist_name')
+        is_change = context.user_data.get('is_change', False)
+        if not name:
+            await update.message.reply_text("❌ Ошибка: никнейм не сохранён. Начните заявку заново.")
+            context.user_data.clear()
+            await show_main_menu(update.message)
+            return
+        request_index = save_whitelist_request(user.id, user.username or "без username", name, text, is_change)
+        await notify_admin_whitelist(context, user, name, text, request_index, is_change)
+        if is_change:
+            await update.message.reply_text("✅ Ваша заявка на изменение ника отправлена на рассмотрение!")
+        else:
+            await update.message.reply_text("✅ Ваша заявка отправлена на рассмотрение! Администратор скоро ответит.")
+        context.user_data.clear()
+        await show_main_menu(update.message)
     else:
-        keyboard = [[InlineKeyboardButton("❌ Отмена", callback_data="cancel_whitelist")]]
-        await query.edit_message_text("📝 *Заявка в вайтлист*\n\nВведите ваш игровой никнейм:", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
-        context.user_data["is_change"] = False
-        print("🔵 whitelist_entry вызвана (новая), возвращаем NAME")
-        return NAME
+        # Если ожидания нет, просто показываем меню (или игнорируем)
+        await show_main_menu(update.message)
 
-# ========== ДИАЛОГ ТИКЕТА ==========
-async def ticket_reason(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    print("🟢 ticket_reason вызвана")
-    add_user(update.effective_user.id)
-    reason_text = update.message.text.strip()
-    if not reason_text:
-        await update.message.reply_text("❌ Причина не может быть пустой. Напишите текст:")
-        return TICKET_REASON
-    context.user_data["ticket_reason"] = reason_text
-    keyboard = [[InlineKeyboardButton("✅ Да, создать", callback_data="confirm_ticket"),
-                 InlineKeyboardButton("❌ Нет, отмена", callback_data="cancel_ticket")]]
-    await update.message.reply_text(f"✏️ *Вы ввели причину:*\n{reason_text}\n\nПодтвердите создание тикета:", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
-    return TICKET_CONFIRM
-
-async def ticket_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# ========== ОБРАБОТЧИК ПОДТВЕРЖДЕНИЯ ТИКЕТА ==========
+async def confirm_ticket(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     try: await query.answer()
     except: pass
     data = query.data
+
     if data == "confirm_ticket":
-        reason = context.user_data.get("ticket_reason", "Не указана")
+        reason = context.user_data.get('ticket_reason', "Не указана")
         user = query.from_user
         ticket_id = add_ticket(user.id, reason)
         await notify_admin_ticket(context, user, reason, ticket_id)
         keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data="back_to_menu")]]
         await query.edit_message_text("✅ *Тикет создан!*\n\nАдминистратор рассмотрит ваше обращение.", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
-        context.user_data.pop('ticket_reason', None)
-        print("🟢 Тикет создан, завершаем диалог")
-        return ConversationHandler.END
+        context.user_data.clear()
     elif data == "cancel_ticket":
         await query.edit_message_text("❌ Создание тикета отменено.")
-        context.user_data.pop('ticket_reason', None)
+        context.user_data.clear()
         await show_main_menu(query)
-        return ConversationHandler.END
 
-async def ticket_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("❌ Создание тикета отменено.")
-    context.user_data.pop('ticket_reason', None)
-    await show_main_menu(update.message)
-    return ConversationHandler.END
-
-# ========== ДИАЛОГ ВАЙТЛИСТА ==========
-async def whitelist_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    print("🟢 whitelist_name вызвана")
-    add_user(update.effective_user.id)
-    name = update.message.text.strip()
-    if not name:
-        await update.message.reply_text("❌ Никнейм не может быть пустым. Попробуйте снова:")
-        return NAME
-    if contains_bad_word(name):
-        await update.message.reply_text("🚫 *Обнаружены недопустимые слова!*", parse_mode="Markdown")
-        return NAME
-    context.user_data["whitelist_name"] = name
-    keyboard = [[InlineKeyboardButton("❌ Отмена", callback_data="cancel_whitelist")]]
-    if context.user_data.get("is_change", False):
-        await update.message.reply_text("Напишите **причину изменения ника** (или нажмите Отмена):", reply_markup=InlineKeyboardMarkup(keyboard))
-    else:
-        await update.message.reply_text("Напишите причину (или нажмите Отмена):", reply_markup=InlineKeyboardMarkup(keyboard))
-    return REASON
-
-async def whitelist_reason(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    print("🟢 whitelist_reason вызвана")
-    add_user(update.effective_user.id)
-    reason = update.message.text.strip()
-    if not reason:
-        await update.message.reply_text("❌ Причина не может быть пустой. Попробуйте снова:")
-        return REASON
-    if contains_bad_word(reason):
-        await update.message.reply_text("🚫 *Обнаружены недопустимые слова!*", parse_mode="Markdown")
-        return REASON
-
-    name = context.user_data["whitelist_name"]
-    user = update.effective_user
-    is_change = context.user_data.get("is_change", False)
-
-    request_index = save_whitelist_request(user.id, user.username or "без username", name, reason, is_change)
-    await notify_admin_whitelist(context, user, name, reason, request_index, is_change)
-
-    if is_change:
-        await update.message.reply_text("✅ Ваша заявка на изменение ника отправлена на рассмотрение!")
-    else:
-        await update.message.reply_text("✅ Ваша заявка отправлена на рассмотрение! Администратор скоро ответит.")
-    context.user_data.pop('whitelist_name', None)
-    context.user_data.pop('is_change', None)
-    await show_main_menu(update.message)
-    return ConversationHandler.END
-
-async def whitelist_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("❌ Отменено.")
-    context.user_data.pop('whitelist_name', None)
-    context.user_data.pop('is_change', None)
-    await show_main_menu(update.message)
-    return ConversationHandler.END
-
-# ========== КОМАНДЫ ДЛЯ АДМИНА И ПОЛЬЗОВАТЕЛЯ ==========
+# ========== КОМАНДЫ ==========
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     add_user(update.effective_user.id)
     context.user_data.clear()
@@ -615,13 +592,7 @@ async def update_news(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ========== ЗАПУСК ==========
 def main():
-    application = (
-        Application.builder()
-        .token(TOKEN)
-        .connect_timeout(30.0)
-        .read_timeout(30.0)
-        .build()
-    )
+    application = Application.builder().token(TOKEN).build()
 
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("menu", menu))
@@ -633,52 +604,21 @@ def main():
     application.add_handler(CommandHandler("cancel_ticket", cancel_ticket_reject))
     application.add_handler(CommandHandler("announce", announce))
 
-    # WHITELIST
-    conv_whitelist = ConversationHandler(
-        entry_points=[CallbackQueryHandler(whitelist_entry, pattern="^whitelist$")],
-        states={
-            NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, whitelist_name)],
-            REASON: [MessageHandler(filters.TEXT & ~filters.COMMAND, whitelist_reason)],
-        },
-        fallbacks=[
-            CommandHandler("cancel", whitelist_cancel),
-            CommandHandler("start", start),
-            CommandHandler("menu", menu),
-            CallbackQueryHandler(button_handler, pattern="^cancel_whitelist$")
-        ],
-    )
-    application.add_handler(conv_whitelist)
-
-    # TICKET
-    conv_ticket = ConversationHandler(
-        entry_points=[CallbackQueryHandler(ticket_entry, pattern="^ticket$")],
-        states={
-            TICKET_REASON: [MessageHandler(filters.TEXT & ~filters.COMMAND, ticket_reason)],
-            TICKET_CONFIRM: [CallbackQueryHandler(ticket_confirm, pattern="^(confirm_ticket|cancel_ticket)$")],
-        },
-        fallbacks=[
-            CommandHandler("cancel", ticket_cancel),
-            CommandHandler("start", start),
-            CommandHandler("menu", menu),
-            CallbackQueryHandler(button_handler, pattern="^cancel_ticket$")
-        ],
-    )
-    application.add_handler(conv_ticket)
-
-    # Остальные кнопки
-    application.add_handler(CallbackQueryHandler(button_handler, pattern="^(news|ip|back_to_menu)$"))
+    # Обработчики кнопок
+    application.add_handler(CallbackQueryHandler(button_handler, pattern="^(news|ip|ticket|whitelist|back_to_menu|cancel_ticket|cancel_whitelist)$"))
+    application.add_handler(CallbackQueryHandler(confirm_ticket, pattern="^(confirm_ticket|cancel_ticket)$"))
     # Решения админа
-    application.add_handler(CallbackQueryHandler(handle_whitelist_decision, pattern="^(approve|reject)_"))
     application.add_handler(CallbackQueryHandler(handle_ticket_decision, pattern="^ticket_(accept|reject)_"))
-    # Причины отклонений
+    application.add_handler(CallbackQueryHandler(handle_whitelist_decision, pattern="^(approve|reject)_"))
+    # Текстовые сообщения
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message_handler))
+    # Причины отклонений (от админа) — также текстовые, но они будут обрабатываться раньше? Нет, они не должны мешать.
+    # Добавим их, но они будут проверять наличие ключей в context.user_data.
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_reject_reason))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_ticket_reject_reason))
 
     print("🚀 Бот запущен и готов к работе!")
-    try:
-        application.run_polling(allowed_updates=["message", "callback_query"])
-    except Exception as e:
-        print(f"❌ Ошибка при работе бота: {e}")
+    application.run_polling(allowed_updates=["message", "callback_query"])
 
 if __name__ == "__main__":
     main()
