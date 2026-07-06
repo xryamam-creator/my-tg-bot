@@ -9,8 +9,9 @@ from dotenv import load_dotenv
 from telegram.warnings import PTBUserWarning
 warnings.filterwarnings("ignore", category=PTBUserWarning)
 
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ChatPermissions
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes, ConversationHandler, MessageHandler, filters
+from telegram.constants import ChatType
 
 # ======================================================
 # 1. КОНФИГУРАЦИЯ
@@ -21,7 +22,8 @@ TOKEN = os.getenv('BOT_TOKEN')
 if not TOKEN:
     raise ValueError("BOT_TOKEN не задан")
 
-ADMIN_CHAT_ID = 1071217435           # Ваш Telegram ID
+ADMIN_CHAT_ID = 1071217435           # Ваш Telegram ID (или список админов)
+ADMINS = [ADMIN_CHAT_ID]             # Можно добавить других админов через запятую
 SERVER_IP = "193.39.168.179:30012"
 DISCORD_LINK = "https://discord.gg/JWrnSCq9H"
 
@@ -53,6 +55,7 @@ NEWS_FILE = "news.txt"
 TECH_NEWS_FILE = "tech_news.txt"
 WHITELIST_FILE = "whitelist_requests.json"
 USERS_FILE = "users.json"
+TICKETS_FILE = "tickets.json"   # Храним информацию о созданных тикетах: {group_id: user_id, ...}
 
 def get_requests():
     if not os.path.exists(WHITELIST_FILE):
@@ -89,6 +92,21 @@ def add_user(user_id):
     if user_id not in users:
         users.append(user_id)
         save_users(users)
+
+def get_tickets():
+    if not os.path.exists(TICKETS_FILE):
+        with open(TICKETS_FILE, "w", encoding="utf-8") as f:
+            json.dump({}, f)
+        return {}
+    try:
+        with open(TICKETS_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except (json.JSONDecodeError, FileNotFoundError):
+        return {}
+
+def save_tickets(tickets):
+    with open(TICKETS_FILE, "w", encoding="utf-8") as f:
+        json.dump(tickets, f, ensure_ascii=False, indent=2)
 
 def get_news():
     if os.path.exists(NEWS_FILE):
@@ -173,7 +191,7 @@ def get_user_current_name(user_id):
     return None
 
 # ======================================================
-# 3. ОТПРАВКА УВЕДОМЛЕНИЙ АДМИНУ
+# 3. ОТПРАВКА УВЕДОМЛЕНИЙ АДМИНУ (для заявок в вайтлист)
 # ======================================================
 
 async def notify_admin_with_buttons(context: ContextTypes.DEFAULT_TYPE, user, name, reason, request_index, is_change=False):
@@ -199,7 +217,7 @@ async def notify_admin_with_buttons(context: ContextTypes.DEFAULT_TYPE, user, na
     )
 
 # ======================================================
-# 4. ОБРАБОТКА РЕШЕНИЯ АДМИНА
+# 4. ОБРАБОТКА РЕШЕНИЯ АДМИНА ПО ЗАЯВКАМ
 # ======================================================
 
 async def handle_decision(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -298,7 +316,7 @@ async def handle_reject_reason(update: Update, context: ContextTypes.DEFAULT_TYP
         await update.message.reply_text(f"⚠️ Не удалось уведомить пользователя (он не начал диалог). Заявка отклонена с причиной: {reason_text}")
 
 # ======================================================
-# 6. КОМАНДЫ
+# 6. КОМАНДЫ (ОБЩИЕ)
 # ======================================================
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -359,7 +377,6 @@ async def announce(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(f"✅ Новость сохранена и разослана {sent} пользователям. Неудачно: {failed}.")
 
 async def tech_announce(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Отправляет техническое объявление всем пользователям"""
     if update.effective_user.id != ADMIN_CHAT_ID:
         await update.message.reply_text("⛔ Нет прав.")
         return
@@ -387,6 +404,40 @@ async def tech_announce(update: Update, context: ContextTypes.DEFAULT_TYPE):
             failed += 1
             print(f"Не удалось отправить пользователю {uid}: {e}")
     await update.message.reply_text(f"✅ Тех. новость сохранена и разослана {sent} пользователям. Неудачно: {failed}.")
+
+# ---------- КОМАНДА ДЛЯ ЗАКРЫТИЯ ТИКЕТА (в группе) ----------
+async def close_ticket(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Закрывает тикет (удаляет группу)"""
+    if update.effective_chat.type != ChatType.SUPERGROUP:
+        await update.message.reply_text("Эта команда работает только в группе тикета.")
+        return
+    group_id = update.effective_chat.id
+    tickets = get_tickets()
+    if str(group_id) not in tickets:
+        await update.message.reply_text("Это не является активным тикетом.")
+        return
+    user_id = tickets[str(group_id)]
+    # Проверяем, что команду дал либо админ, либо пользователь, создавший тикет
+    if update.effective_user.id != user_id and update.effective_user.id not in ADMINS:
+        await update.message.reply_text("⛔ Только администратор или создатель тикета могут закрыть его.")
+        return
+    # Отправляем уведомление
+    try:
+        await context.bot.send_message(chat_id=user_id, text="🔒 Ваш тикет был закрыт администратором.")
+    except:
+        pass
+    for admin in ADMINS:
+        try:
+            await context.bot.send_message(chat_id=admin, text=f"🔒 Тикет #{group_id} закрыт.")
+        except:
+            pass
+    # Удаляем группу
+    await context.bot.send_message(chat_id=group_id, text="🔒 Тикет закрыт. Группа будет удалена через 5 секунд.")
+    await asyncio.sleep(5)
+    await context.bot.leave_chat(chat_id=group_id)
+    # Удаляем запись о тикете
+    del tickets[str(group_id)]
+    save_tickets(tickets)
 
 # ======================================================
 # 7. ПОКАЗ МЕНЮ И ОБРАБОТЧИК КНОПОК
@@ -441,14 +492,14 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode="Markdown"
         )
     elif data == "ticket":
-        # Запускаем диалог создания тикета — entry point для ConversationHandler
+        # Запускаем диалог создания тикета
         keyboard = [[InlineKeyboardButton("❌ Отмена", callback_data="cancel_ticket")]]
         await query.edit_message_text(
             "✏️ *Создание тикета*\n\nОпишите причину обращения (или нажмите Отмена):",
             reply_markup=InlineKeyboardMarkup(keyboard),
             parse_mode="Markdown"
         )
-        return TICKET_REASON  # переход в состояние ожидания текста
+        return TICKET_REASON
     elif data == "back_to_menu":
         await show_main_menu(query)
     elif data == "cancel_whitelist":
@@ -461,15 +512,12 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ======================================================
 
 async def ticket_reason(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Принимает причину тикета и переходит к подтверждению"""
     add_user(update.effective_user.id)
     reason_text = update.message.text.strip()
     if not reason_text:
         await update.message.reply_text("❌ Причина не может быть пустой. Напишите текст:")
         return TICKET_REASON
-    # Сохраняем причину
     context.user_data["ticket_reason"] = reason_text
-    # Показываем кнопки подтверждения
     keyboard = [
         [
             InlineKeyboardButton("✅ Да, создать", callback_data="confirm_ticket"),
@@ -484,7 +532,6 @@ async def ticket_reason(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return TICKET_CONFIRM
 
 async def ticket_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обрабатывает нажатие кнопок подтверждения/отмены"""
     query = update.callback_query
     try:
         await query.answer()
@@ -495,25 +542,53 @@ async def ticket_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data == "confirm_ticket":
         reason = context.user_data.get("ticket_reason", "Не указана")
         user = query.from_user
-        # Отправляем админу уведомление
-        admin_text = (
-            f"🎫 *Новый тикет!*\n"
-            f"От: {user.mention_html()} (@{user.username or 'нет username'})\n"
-            f"ID: `{user.id}`\n"
-            f"Причина: {reason}\n"
-            f"Дата: {datetime.now().strftime('%d.%m.%Y %H:%M')}"
-        )
-        await context.bot.send_message(chat_id=ADMIN_CHAT_ID, text=admin_text, parse_mode="Markdown")
-        # Подтверждаем пользователю
-        keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data="back_to_menu")]]
-        await query.edit_message_text(
-            "✅ *Тикет создан!*\n\nАдминистратор свяжется с вами в ближайшее время.",
-            reply_markup=InlineKeyboardMarkup(keyboard),
-            parse_mode="Markdown"
-        )
-        # Завершаем диалог
-        context.user_data.pop("ticket_reason", None)
-        return ConversationHandler.END
+        # Создаём группу
+        try:
+            # Сначала создаём супергруппу
+            group = await context.bot.create_chat(
+                title=f"🎫 Тикет от @{user.username or user.first_name}",
+                chat_type=ChatType.SUPERGROUP
+            )
+            group_id = group.id
+            # Добавляем пользователя и администраторов
+            await context.bot.add_chat_members(chat_id=group_id, user_ids=[user.id] + ADMINS)
+            # Назначаем права (можно ограничить)
+            # Отправляем приветствие
+            welcome_text = (
+                f"🔹 *Тикет создан!*\n"
+                f"Пользователь: {user.mention_html()} (@{user.username or 'нет username'})\n"
+                f"Причина: {reason}\n"
+                f"Дата: {datetime.now().strftime('%d.%m.%Y %H:%M')}\n\n"
+                f"Общайтесь здесь. Для закрытия тикета используйте команду /close."
+            )
+            await context.bot.send_message(chat_id=group_id, text=welcome_text, parse_mode="Markdown")
+            # Уведомляем админов в личку (опционально)
+            for admin in ADMINS:
+                try:
+                    await context.bot.send_message(
+                        chat_id=admin,
+                        text=f"🆕 Создан новый тикет #{group_id} от {user.mention_html()}",
+                        parse_mode="Markdown"
+                    )
+                except:
+                    pass
+            # Сохраняем информацию о тикете
+            tickets = get_tickets()
+            tickets[str(group_id)] = user.id
+            save_tickets(tickets)
+            # Подтверждаем пользователю
+            keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data="back_to_menu")]]
+            await query.edit_message_text(
+                f"✅ *Тикет создан!*\n\nГруппа для общения: {group.invite_link or 'приглашение недоступно'}\nАдминистратор уже уведомлён.",
+                reply_markup=InlineKeyboardMarkup(keyboard),
+                parse_mode="Markdown"
+            )
+            context.user_data.pop("ticket_reason", None)
+            return ConversationHandler.END
+        except Exception as e:
+            await query.edit_message_text(f"❌ Ошибка при создании тикета: {e}")
+            context.user_data.pop("ticket_reason", None)
+            return ConversationHandler.END
     elif data == "cancel_ticket":
         await query.edit_message_text("❌ Создание тикета отменено.")
         await show_main_menu(query)
@@ -521,14 +596,13 @@ async def ticket_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return ConversationHandler.END
 
 async def ticket_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Отмена через /cancel в процессе диалога"""
     await update.message.reply_text("❌ Создание тикета отменено.")
     await show_main_menu(update.message)
     context.user_data.pop("ticket_reason", None)
     return ConversationHandler.END
 
 # ======================================================
-# 9. ВХОДНАЯ ТОЧКА ДЛЯ ЗАЯВКИ В ВАЙТЛИСТ (С ПРОВЕРКОЙ)
+# 9. ВХОДНАЯ ТОЧКА ДЛЯ ЗАЯВКИ В ВАЙТЛИСТ
 # ======================================================
 
 async def whitelist_entry(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -573,7 +647,7 @@ async def whitelist_entry(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return NAME
 
 # ======================================================
-# 10. ДИАЛОГ ЗАЯВКИ В ВАЙТЛИСТ (С ФИЛЬТРОМ ОСКОРБЛЕНИЙ)
+# 10. ДИАЛОГ ЗАЯВКИ В ВАЙТЛИСТ
 # ======================================================
 
 async def whitelist_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -696,6 +770,7 @@ def main():
     application.add_handler(CommandHandler("cancel", cancel_reject))
     application.add_handler(CommandHandler("announce", announce))
     application.add_handler(CommandHandler("tech_announce", tech_announce))
+    application.add_handler(CommandHandler("close", close_ticket))  # команда для закрытия тикета в группе
 
     # ConversationHandler для заявок в вайтлист
     conv_whitelist = ConversationHandler(
@@ -725,7 +800,7 @@ def main():
     )
     application.add_handler(conv_ticket)
 
-    # Обработчики кнопок меню (кроме ticket и whitelist, которые уже обработаны в entry_points)
+    # Обработчики кнопок меню
     application.add_handler(CallbackQueryHandler(button_handler, pattern="^(news|tech|ip|back_to_menu|cancel_whitelist|cancel_ticket)$"))
     application.add_handler(CallbackQueryHandler(handle_decision, pattern="^(approve|reject)_"))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_reject_reason))
