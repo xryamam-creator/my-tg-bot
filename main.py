@@ -234,6 +234,7 @@ def main():
             REASON: [MessageHandler(filters.TEXT & ~filters.COMMAND, whitelist_reason)],
         },
         fallbacks=[CommandHandler("cancel", whitelist_cancel)],
+        per_message=True,   # добавлено, чтобы убрать предупреждение
     )
     application.add_handler(conv_handler)
 
