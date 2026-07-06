@@ -25,15 +25,15 @@ ADMIN_CHAT_ID = 1071217435           # Ваш Telegram ID
 SERVER_IP = "193.39.168.179:30012"
 DISCORD_LINK = "https://discord.gg/JWrnSCq9H"
 
+# ---------- СОСТОЯНИЯ ДЛЯ ДИАЛОГА ----------
+NAME, REASON = range(2)
+
 # ---------- СПИСОК ЗАПРЕЩЁННЫХ СЛОВ ----------
 BAD_WORDS = [
     "хуй", "пизда", "бля", "ебан", "залуп", "гандон", "мудила", "петух", "пидор",
     "лох", "шлюха", "курва", "сука", "ублюд", "сволочь", "тварь", "выродок",
     "fuck", "shit", "cunt", "dick", "asshole", "bastard", "whore", "slut", "bitch"
 ]
-
-# ---------- СОСТОЯНИЯ ДЛЯ ДИАЛОГА ----------
-NAME, REASON = range(2)
 
 def contains_bad_word(text):
     if not text:
@@ -45,14 +45,14 @@ def contains_bad_word(text):
     return False
 
 # ======================================================
-# 2. РАБОТА С ФАЙЛАМИ (АВТОСОЗДАНИЕ)
+# 2. РАБОТА С ФАЙЛАМИ
 # ======================================================
 
 NEWS_FILE = "news.txt"
 WHITELIST_FILE = "whitelist_requests.json"
+USERS_FILE = "users.json"
 
 def get_requests():
-    """Возвращает список заявок, создаёт файл, если его нет."""
     if not os.path.exists(WHITELIST_FILE):
         with open(WHITELIST_FILE, "w", encoding="utf-8") as f:
             json.dump([], f)
@@ -66,6 +66,27 @@ def get_requests():
 def save_requests(requests):
     with open(WHITELIST_FILE, "w", encoding="utf-8") as f:
         json.dump(requests, f, ensure_ascii=False, indent=2)
+
+def get_users():
+    if not os.path.exists(USERS_FILE):
+        with open(USERS_FILE, "w", encoding="utf-8") as f:
+            json.dump([], f)
+        return []
+    try:
+        with open(USERS_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except (json.JSONDecodeError, FileNotFoundError):
+        return []
+
+def save_users(users):
+    with open(USERS_FILE, "w", encoding="utf-8") as f:
+        json.dump(users, f, ensure_ascii=False, indent=2)
+
+def add_user(user_id):
+    users = get_users()
+    if user_id not in users:
+        users.append(user_id)
+        save_users(users)
 
 def get_news():
     if os.path.exists(NEWS_FILE):
@@ -266,9 +287,11 @@ async def handle_reject_reason(update: Update, context: ContextTypes.DEFAULT_TYP
 # ======================================================
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    add_user(update.effective_user.id)
     await show_main_menu(update.message)
 
 async def menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    add_user(update.effective_user.id)
     await show_main_menu(update.message)
 
 async def test(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -290,6 +313,39 @@ async def cancel_reject(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Отклонение отменено.")
     else:
         await update.message.reply_text("Нет активной операции отклонения.")
+
+# ---------- НОВАЯ КОМАНДА ДЛЯ РАССЫЛКИ НОВОСТЕЙ ----------
+async def announce(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Отправляет новость всем пользователям (только для админа)"""
+    if update.effective_user.id != ADMIN_CHAT_ID:
+        await update.message.reply_text("⛔ Нет прав.")
+        return
+    if not context.args:
+        await update.message.reply_text("❌ Укажите текст новости. Пример: /announce Текст новости")
+        return
+    news_text = " ".join(context.args)
+    # Сохраняем в файл
+    set_news(news_text)
+    # Рассылаем всем пользователям
+    users = get_users()
+    if not users:
+        await update.message.reply_text("❌ Нет пользователей для рассылки.")
+        return
+    sent = 0
+    failed = 0
+    for uid in users:
+        try:
+            await context.bot.send_message(
+                chat_id=uid,
+                text=f"📢 *НОВОСТЬ!*\n\n{news_text}",
+                parse_mode="Markdown"
+            )
+            sent += 1
+            await asyncio.sleep(0.05)  # чтобы не превысить лимиты Telegram
+        except Exception as e:
+            failed += 1
+            print(f"Не удалось отправить пользователю {uid}: {e}")
+    await update.message.reply_text(f"✅ Новость сохранена и разослана {sent} пользователям. Неудачно: {failed}.")
 
 # ======================================================
 # 7. ПОКАЗ МЕНЮ И ОБРАБОТЧИК КНОПОК
@@ -314,6 +370,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     data = query.data
+    add_user(query.from_user.id)  # сохраняем пользователя
 
     if data == "news":
         news_text = get_news()
@@ -339,9 +396,10 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"Создан: {datetime.now().strftime('%d.%m.%Y %H:%M')}"
         )
         await context.bot.send_message(chat_id=ADMIN_CHAT_ID, text=text, parse_mode="Markdown")
+        # Изменяем ответ пользователю
         keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data="back_to_menu")]]
         await query.edit_message_text(
-            "✅ *Тикет создан!*\n\nАдминистратор уведомлён.",
+            "✅ *Тикет создан!*\n\nАдминистратор свяжется с вами в ближайшее время.",
             reply_markup=InlineKeyboardMarkup(keyboard),
             parse_mode="Markdown"
         )
@@ -359,6 +417,7 @@ async def whitelist_entry(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     user = query.from_user
     user_id = user.id
+    add_user(user_id)
 
     last_req = get_last_user_request(user_id)
     if last_req and last_req["status"] == "pending":
@@ -396,6 +455,7 @@ async def whitelist_entry(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ======================================================
 
 async def whitelist_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    add_user(update.effective_user.id)
     name = update.message.text.strip()
     if not name:
         await update.message.reply_text("❌ Никнейм не может быть пустым. Попробуйте снова:")
@@ -422,6 +482,7 @@ async def whitelist_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return REASON
 
 async def whitelist_reason(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    add_user(update.effective_user.id)
     reason = update.message.text.strip()
     if not reason:
         await update.message.reply_text("❌ Причина не может быть пустой. Попробуйте снова:")
@@ -455,7 +516,7 @@ async def whitelist_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 # ======================================================
-# 10. КОМАНДЫ ДЛЯ АДМИНА
+# 10. КОМАНДЫ ДЛЯ АДМИНА (ПРОСМОТР ЗАЯВОК, ОБНОВЛЕНИЕ НОВОСТЕЙ)
 # ======================================================
 
 async def view_requests(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -510,6 +571,7 @@ def main():
     application.add_handler(CommandHandler("update_news", update_news))
     application.add_handler(CommandHandler("view_requests", view_requests))
     application.add_handler(CommandHandler("cancel", cancel_reject))
+    application.add_handler(CommandHandler("announce", announce))  # новая команда
 
     conv_handler = ConversationHandler(
         entry_points=[CallbackQueryHandler(whitelist_entry, pattern="^whitelist$")],
