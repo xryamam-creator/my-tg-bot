@@ -359,15 +359,12 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data="back_to_menu")]]
         await query.edit_message_text(f"🌐 *IP сервера:*\n`{SERVER_IP}`", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
     elif data == "ticket":
-        # Начинаем процесс создания тикета
         context.user_data['expecting'] = 'ticket_reason'
         keyboard = [[InlineKeyboardButton("❌ Отмена", callback_data="cancel_ticket")]]
         await query.edit_message_text("✏️ *Создание тикета*\n\nОпишите причину обращения (или нажмите Отмена):", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
     elif data == "whitelist":
-        # Начинаем процесс заявки в вайтлист
         user = query.from_user
         user_id = user.id
-        # Проверяем, есть ли уже pending заявка
         last_req = get_last_user_request(user_id)
         if last_req and last_req["status"] == "pending":
             await query.edit_message_text("⏳ *У вас уже есть заявка на рассмотрении!*", parse_mode="Markdown")
@@ -409,7 +406,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("❌ Причина не может быть пустой. Напишите текст:")
             return
         context.user_data['ticket_reason'] = text
-        context.user_data['expecting'] = None  # сбрасываем ожидание
+        context.user_data['expecting'] = None
         keyboard = [[InlineKeyboardButton("✅ Да, создать", callback_data="confirm_ticket"),
                      InlineKeyboardButton("❌ Нет, отмена", callback_data="cancel_ticket")]]
         await update.message.reply_text(f"✏️ *Вы ввели причину:*\n{text}\n\nПодтвердите создание тикета:", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
@@ -458,8 +455,9 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data.clear()
         await show_main_menu(update.message)
     else:
-        # Если ожидания нет, просто показываем меню (или игнорируем)
-        await show_main_menu(update.message)
+        # Если ожидания нет, но сообщение от админа с причиной отклонения – обработаем в соответствующих обработчиках
+        # В этом обработчике мы ничего не делаем, чтобы не мешать.
+        pass
 
 # ========== ОБРАБОТЧИК ПОДТВЕРЖДЕНИЯ ТИКЕТА ==========
 async def confirm_ticket(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -604,16 +602,16 @@ def main():
     application.add_handler(CommandHandler("cancel_ticket", cancel_ticket_reject))
     application.add_handler(CommandHandler("announce", announce))
 
-    # Обработчики кнопок
+    # Кнопки
     application.add_handler(CallbackQueryHandler(button_handler, pattern="^(news|ip|ticket|whitelist|back_to_menu|cancel_ticket|cancel_whitelist)$"))
     application.add_handler(CallbackQueryHandler(confirm_ticket, pattern="^(confirm_ticket|cancel_ticket)$"))
-    # Решения админа
+    # Решения
     application.add_handler(CallbackQueryHandler(handle_ticket_decision, pattern="^ticket_(accept|reject)_"))
     application.add_handler(CallbackQueryHandler(handle_whitelist_decision, pattern="^(approve|reject)_"))
-    # Текстовые сообщения
+    # Текстовые сообщения (общие)
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message_handler))
-    # Причины отклонений (от админа) — также текстовые, но они будут обрабатываться раньше? Нет, они не должны мешать.
-    # Добавим их, но они будут проверять наличие ключей в context.user_data.
+    # Причины отклонений (от админа) – они тоже текстовые, но должны быть после общего обработчика, чтобы не перехватывать
+    # Так как они проверяют наличие ключей, они не помешают, если поставить после.
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_reject_reason))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_ticket_reject_reason))
 
