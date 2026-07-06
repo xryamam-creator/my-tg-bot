@@ -66,18 +66,34 @@ def save_whitelist_request(user_id, username, name, reason):
 # УВЕДОМЛЕНИЕ АДМИНИСТРАТОРУ
 # ======================================================
 
-async def notify_admin(context: ContextTypes.DEFAULT_TYPE, text: str):
+async def notify_admin(context: ContextTypes.DEFAULT_TYPE, text: str, reply_to_message=None):
     try:
-        await context.bot.send_message(chat_id=ADMIN_CHAT_ID, text=text, parse_mode="Markdown")
+        if reply_to_message:
+            # Пересылаем сообщение пользователя админу (чтобы видеть, что он написал)
+            await context.bot.forward_message(
+                chat_id=ADMIN_CHAT_ID,
+                from_chat_id=reply_to_message.chat.id,
+                message_id=reply_to_message.message_id
+            )
+            # Затем отправляем текстовое уведомление
+            await context.bot.send_message(chat_id=ADMIN_CHAT_ID, text=text, parse_mode="Markdown")
+        else:
+            await context.bot.send_message(chat_id=ADMIN_CHAT_ID, text=text, parse_mode="Markdown")
         print("✅ Уведомление отправлено админу")
     except Exception as e:
         print(f"❌ Ошибка отправки уведомления: {e}")
 
 # ======================================================
-# КОМАНДА /start
+# КОМАНДА /start и /menu (показывают главное меню)
 # ======================================================
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await show_main_menu(update.message, update.effective_user)
+
+async def menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await show_main_menu(update.message, update.effective_user)
+
+async def show_main_menu(message, user):
     keyboard = [
         [InlineKeyboardButton("📢 Новости", callback_data="news")],
         [InlineKeyboardButton("🎫 Создать тикет", callback_data="ticket")],
@@ -86,7 +102,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("🔗 Ссылка на Discord", url=DISCORD_LINK)],
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
-    await update.message.reply_text(
+    await message.reply_text(
         "🏠 *Главное меню*\n\nВыберите нужный раздел:",
         reply_markup=reply_markup,
         parse_mode="Markdown"
@@ -135,19 +151,28 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_reply_markup(reply_markup=InlineKeyboardMarkup(keyboard))
 
     elif data == "whitelist":
+        # Показываем приглашение ввести никнейм с кнопкой "Отмена"
+        keyboard = [[InlineKeyboardButton("❌ Отмена", callback_data="cancel_whitelist")]]
         await query.edit_message_text(
-            "📝 *Заявка в вайтлист*\n\nВведите ваш игровой никнейм:",
+            "📝 *Заявка в вайтлист*\n\nВведите ваш игровой никнейм (или нажмите Отмена):",
+            reply_markup=InlineKeyboardMarkup(keyboard),
             parse_mode="Markdown"
         )
+        # Возврат управления диалогу
 
     elif data == "back_to_menu":
-        await show_menu(query)
+        # Возврат в главное меню из любого места (используется после новостей, IP, тикета)
+        await show_main_menu_from_query(query)
+
+    elif data == "cancel_whitelist":
+        # Отмена диалога и возврат в меню
+        await show_main_menu_from_query(query)
 
 # ======================================================
-# ПОКАЗ ГЛАВНОГО МЕНЮ
+# ВСПОМОГАТЕЛЬНАЯ ФУНКЦИЯ ДЛЯ ПОКАЗА МЕНЮ ИЗ QUERY
 # ======================================================
 
-async def show_menu(query):
+async def show_main_menu_from_query(query):
     keyboard = [
         [InlineKeyboardButton("📢 Новости", callback_data="news")],
         [InlineKeyboardButton("🎫 Создать тикет", callback_data="ticket")],
@@ -167,12 +192,19 @@ async def show_menu(query):
 # ======================================================
 
 async def whitelist_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Введите ваш игровой никнейм:")
+    # Этот обработчик не используется напрямую, т.к. мы входим через CallbackQuery
+    # но он нужен для ConversationHandler
+    await update.message.reply_text("Введите ваш игровой никнейм (или нажмите Отмена):")
     return NAME
 
 async def whitelist_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Сохраняем ник, просим причину с кнопкой "Отмена"
     context.user_data["whitelist_name"] = update.message.text
-    await update.message.reply_text("Напишите причину:")
+    keyboard = [[InlineKeyboardButton("❌ Отмена", callback_data="cancel_whitelist")]]
+    await update.message.reply_text(
+        "Напишите причину (или нажмите Отмена):",
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
     return REASON
 
 async def whitelist_reason(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -192,30 +224,21 @@ async def whitelist_reason(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"Дата: {datetime.now().strftime('%d.%m.%Y %H:%M')}"
     )
 
-    # Отправляем уведомление админу с явным логированием
+    # Отправляем уведомление админу с пересылкой сообщения пользователя
     print(f"🔔 Отправляю уведомление админу {ADMIN_CHAT_ID}: {text}")
-    await notify_admin(context, text)
+    await notify_admin(context, text, reply_to_message=update.message)
 
+    # Подтверждаем пользователю
     await update.message.reply_text("✅ Заявка отправлена!")
 
     # Показываем главное меню
-    keyboard = [
-        [InlineKeyboardButton("📢 Новости", callback_data="news")],
-        [InlineKeyboardButton("🎫 Создать тикет", callback_data="ticket")],
-        [InlineKeyboardButton("📝 Заявка в вайтлист", callback_data="whitelist")],
-        [InlineKeyboardButton("🌐 IP сервера", callback_data="ip")],
-        [InlineKeyboardButton("🔗 Ссылка на Discord", url=DISCORD_LINK)],
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    await update.message.reply_text(
-        "🏠 *Главное меню*\n\nВыберите нужный раздел:",
-        reply_markup=reply_markup,
-        parse_mode="Markdown"
-    )
+    await show_main_menu(update.message, user)
     return ConversationHandler.END
 
 async def whitelist_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Обработчик команды /cancel
     await update.message.reply_text("❌ Отменено.")
+    await show_main_menu(update.message, update.effective_user)
     return ConversationHandler.END
 
 # ======================================================
@@ -268,21 +291,28 @@ async def view_requests(update: Update, context: ContextTypes.DEFAULT_TYPE):
 def main():
     application = Application.builder().token(TOKEN).build()
 
+    # Команды
     application.add_handler(CommandHandler("start", start))
+    application.add_handler(CommandHandler("menu", menu))
     application.add_handler(CommandHandler("update_news", update_news))
     application.add_handler(CommandHandler("view_requests", view_requests))
 
+    # ConversationHandler для заявки в вайтлист
     conv_handler = ConversationHandler(
         entry_points=[CallbackQueryHandler(button_handler, pattern="^whitelist$")],
         states={
             NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, whitelist_name)],
             REASON: [MessageHandler(filters.TEXT & ~filters.COMMAND, whitelist_reason)],
         },
-        fallbacks=[CommandHandler("cancel", whitelist_cancel)],
+        fallbacks=[
+            CommandHandler("cancel", whitelist_cancel),
+            CallbackQueryHandler(button_handler, pattern="^cancel_whitelist$")
+        ],
     )
     application.add_handler(conv_handler)
 
-    application.add_handler(CallbackQueryHandler(button_handler, pattern="^(news|ticket|ip|back_to_menu)$"))
+    # Обработчик остальных кнопок (кроме whitelist, который уже обработан в entry_points)
+    application.add_handler(CallbackQueryHandler(button_handler, pattern="^(news|ticket|ip|back_to_menu|cancel_whitelist)$"))
 
     print("🚀 Бот запущен и готов к работе!")
     application.run_polling(allowed_updates=["message", "callback_query"])
