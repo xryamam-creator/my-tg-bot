@@ -241,8 +241,12 @@ async def handle_ticket_decision(update: Update, context: ContextTypes.DEFAULT_T
         except: pass
 
 async def handle_ticket_reject_reason(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if 'pending_ticket_reject' not in context.user_data or update.effective_user.id != ADMIN_CHAT_ID:
+    # Явно проверяем, что это админ и есть активный ключ
+    if update.effective_user.id != ADMIN_CHAT_ID:
         return
+    if 'pending_ticket_reject' not in context.user_data:
+        return
+    print("🟣 handle_ticket_reject_reason вызвана")  # лог
     ticket_id = context.user_data.pop('pending_ticket_reject')
     reason_text = update.message.text.strip()
     if not reason_text:
@@ -306,8 +310,11 @@ async def handle_whitelist_decision(update: Update, context: ContextTypes.DEFAUL
         except: pass
 
 async def handle_reject_reason(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if 'pending_reject_index' not in context.user_data or update.effective_user.id != ADMIN_CHAT_ID:
+    if update.effective_user.id != ADMIN_CHAT_ID:
         return
+    if 'pending_reject_index' not in context.user_data:
+        return
+    print("🟣 handle_reject_reason вызвана")  # лог
     index = context.user_data.pop('pending_reject_index')
     reason_text = update.message.text.strip()
     if not reason_text:
@@ -359,14 +366,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data="back_to_menu")]]
         await query.edit_message_text(f"🌐 *IP сервера:*\n`{SERVER_IP}`", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
     elif data == "back_to_menu":
-        # Выход из любого состояния – очищаем user_data и показываем меню
-        # Но это обрабатывается в самом диалоге, здесь только для кнопок вне диалога
-        await show_main_menu(query)
-    elif data == "cancel_whitelist":
-        # Эта кнопка используется внутри диалога вайтлиста, но обрабатывается в fallback
-        # Чтобы не дублировать, просто покажем меню
-        await show_main_menu(query)
-    elif data == "cancel_ticket":
         await show_main_menu(query)
 
 # ========== ВХОДНЫЕ ТОЧКИ ДЛЯ ДИАЛОГОВ ==========
@@ -375,10 +374,10 @@ async def ticket_entry(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try: await query.answer()
     except: pass
     add_user(query.from_user.id)
-    # Очищаем старые данные
     context.user_data.pop('ticket_reason', None)
     keyboard = [[InlineKeyboardButton("❌ Отмена", callback_data="cancel_ticket")]]
     await query.edit_message_text("✏️ *Создание тикета*\n\nОпишите причину обращения:", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
+    print("🔵 ticket_entry вызвана, возвращаем TICKET_REASON")
     return TICKET_REASON
 
 async def whitelist_entry(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -388,7 +387,6 @@ async def whitelist_entry(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = query.from_user
     user_id = user.id
     add_user(user_id)
-    # Очищаем старые данные
     context.user_data.pop('whitelist_name', None)
     context.user_data.pop('is_change', None)
 
@@ -404,15 +402,18 @@ async def whitelist_entry(update: Update, context: ContextTypes.DEFAULT_TYPE):
         keyboard = [[InlineKeyboardButton("❌ Отмена", callback_data="cancel_whitelist")]]
         await query.edit_message_text(f"✏️ *Вы уже в вайтлисте* (текущий ник: `{current_name}`).\nВведите **новый никнейм** для изменения:", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
         context.user_data["is_change"] = True
+        print("🔵 whitelist_entry вызвана (изменение), возвращаем NAME")
         return NAME
     else:
         keyboard = [[InlineKeyboardButton("❌ Отмена", callback_data="cancel_whitelist")]]
         await query.edit_message_text("📝 *Заявка в вайтлист*\n\nВведите ваш игровой никнейм:", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
         context.user_data["is_change"] = False
+        print("🔵 whitelist_entry вызвана (новая), возвращаем NAME")
         return NAME
 
 # ========== ДИАЛОГ ТИКЕТА ==========
 async def ticket_reason(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    print("🟢 ticket_reason вызвана")  # лог
     add_user(update.effective_user.id)
     reason_text = update.message.text.strip()
     if not reason_text:
@@ -436,8 +437,8 @@ async def ticket_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await notify_admin_ticket(context, user, reason, ticket_id)
         keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data="back_to_menu")]]
         await query.edit_message_text("✅ *Тикет создан!*\n\nАдминистратор рассмотрит ваше обращение.", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
-        # Чистим данные и завершаем диалог
         context.user_data.pop('ticket_reason', None)
+        print("🟢 Тикет создан, завершаем диалог")
         return ConversationHandler.END
     elif data == "cancel_ticket":
         await query.edit_message_text("❌ Создание тикета отменено.")
@@ -453,6 +454,7 @@ async def ticket_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ========== ДИАЛОГ ВАЙТЛИСТА ==========
 async def whitelist_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    print("🟢 whitelist_name вызвана")  # лог
     add_user(update.effective_user.id)
     name = update.message.text.strip()
     if not name:
@@ -470,6 +472,7 @@ async def whitelist_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return REASON
 
 async def whitelist_reason(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    print("🟢 whitelist_reason вызвана")  # лог
     add_user(update.effective_user.id)
     reason = update.message.text.strip()
     if not reason:
@@ -490,7 +493,6 @@ async def whitelist_reason(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("✅ Ваша заявка на изменение ника отправлена на рассмотрение!")
     else:
         await update.message.reply_text("✅ Ваша заявка отправлена на рассмотрение! Администратор скоро ответит.")
-    # Чистим данные
     context.user_data.pop('whitelist_name', None)
     context.user_data.pop('is_change', None)
     await show_main_menu(update.message)
@@ -506,7 +508,6 @@ async def whitelist_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ========== КОМАНДЫ ДЛЯ АДМИНА И ПОЛЬЗОВАТЕЛЯ ==========
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     add_user(update.effective_user.id)
-    # Принудительно завершаем любой активный диалог
     context.user_data.clear()
     await show_main_menu(update.message)
 
@@ -636,7 +637,7 @@ def main():
         },
         fallbacks=[
             CommandHandler("cancel", whitelist_cancel),
-            CommandHandler("start", start),  # принудительный выход
+            CommandHandler("start", start),
             CommandHandler("menu", menu),
             CallbackQueryHandler(button_handler, pattern="^cancel_whitelist$")
         ],
@@ -664,7 +665,7 @@ def main():
     # Решения админа
     application.add_handler(CallbackQueryHandler(handle_whitelist_decision, pattern="^(approve|reject)_"))
     application.add_handler(CallbackQueryHandler(handle_ticket_decision, pattern="^ticket_(accept|reject)_"))
-    # Причины отклонений
+    # Причины отклонений (должны быть самыми последними, чтобы не перехватывать)
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_reject_reason))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_ticket_reject_reason))
 
