@@ -50,7 +50,7 @@ def contains_bad_word(text):
 # ======================================================
 
 NEWS_FILE = "news.txt"
-TECH_NEWS_FILE = "tech_news.txt"
+# TECH_NEWS_FILE = "tech_news.txt"  # <--- УДАЛЕНО (больше не нужно)
 WHITELIST_FILE = "whitelist_requests.json"
 USERS_FILE = "users.json"
 TICKETS_FILE = "tickets.json"
@@ -138,15 +138,7 @@ def set_news(text):
     with open(NEWS_FILE, "w", encoding="utf-8") as f:
         f.write(text)
 
-def get_tech_news():
-    if os.path.exists(TECH_NEWS_FILE):
-        with open(TECH_NEWS_FILE, "r", encoding="utf-8") as f:
-            return f.read().strip()
-    return "Технических новостей пока нет."
-
-def set_tech_news(text):
-    with open(TECH_NEWS_FILE, "w", encoding="utf-8") as f:
-        f.write(text)
+# Функции get_tech_news и set_tech_news УДАЛЕНЫ
 
 def save_whitelist_request(user_id, username, name, reason, is_change=False):
     status = "change_request" if is_change else "pending"
@@ -526,46 +518,21 @@ async def announce(update: Update, context: ContextTypes.DEFAULT_TYPE):
             print(f"Не удалось отправить пользователю {uid}: {e}")
     await update.message.reply_text(f"✅ Новость сохранена и разослана {sent} пользователям. Неудачно: {failed}.")
 
-async def tech_announce(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_CHAT_ID:
-        await update.message.reply_text("⛔ Нет прав.")
-        return
-    if not context.args:
-        await update.message.reply_text("❌ Укажите текст тех. новости. Пример: /tech_announce Текст")
-        return
-    tech_text = " ".join(context.args)
-    set_tech_news(tech_text)
-    users = get_users()
-    if not users:
-        await update.message.reply_text("❌ Нет пользователей для рассылки.")
-        return
-    sent = 0
-    failed = 0
-    for uid in users:
-        try:
-            await context.bot.send_message(
-                chat_id=uid,
-                text=f"🛠 *ТЕХНИЧЕСКОЕ ОБЪЯВЛЕНИЕ!*\n\n{tech_text}",
-                parse_mode="Markdown"
-            )
-            sent += 1
-            await asyncio.sleep(0.05)
-        except Exception as e:
-            failed += 1
-            print(f"Не удалось отправить пользователю {uid}: {e}")
-    await update.message.reply_text(f"✅ Тех. новость сохранена и разослана {sent} пользователям. Неудачно: {failed}.")
+# Команда tech_announce УДАЛЕНА
 
 # ======================================================
-# 10. ПОКАЗ МЕНЮ И ОБРАБОТЧИК КНОПОК (БЕЗ TICKET И WHITELIST)
+# 10. ПОКАЗ МЕНЮ И ОБРАБОТЧИК КНОПОК
 # ======================================================
 
 async def show_main_menu(target, user=None):
     keyboard = [
         [InlineKeyboardButton("📢 Новости", callback_data="news")],
-        [InlineKeyboardButton("🛠 Тех. часть", callback_data="tech")],
+        # Кнопка "Тех. часть" УДАЛЕНА
         [InlineKeyboardButton("🎫 Создать тикет", callback_data="ticket")],
         [InlineKeyboardButton("📝 Заявка в вайтлист", callback_data="whitelist")],
         [InlineKeyboardButton("🌐 IP сервера", callback_data="ip")],
+        # НОВАЯ кнопка со ссылкой на мод
+        [InlineKeyboardButton("🔊 Скачать мод", url="https://modrinth.com/mod/plasmo-voice")],
         [InlineKeyboardButton("🔗 Ссылка на Discord", url=DISCORD_LINK)],
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -576,7 +543,7 @@ async def show_main_menu(target, user=None):
         await target.reply_text(text, reply_markup=reply_markup, parse_mode="Markdown")
 
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обрабатывает все кнопки, кроме ticket и whitelist (они обрабатываются отдельно)"""
+    """Обрабатывает все кнопки, кроме ticket и whitelist."""
     query = update.callback_query
     try:
         await query.answer()
@@ -593,14 +560,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=InlineKeyboardMarkup(keyboard),
             parse_mode="Markdown"
         )
-    elif data == "tech":
-        tech_text = get_tech_news()
-        keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data="back_to_menu")]]
-        await query.edit_message_text(
-            f"🛠 *Техническая часть:*\n\n{tech_text}",
-            reply_markup=InlineKeyboardMarkup(keyboard),
-            parse_mode="Markdown"
-        )
+    # Обработчик для "tech" УДАЛЕН
     elif data == "ip":
         keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data="back_to_menu")]]
         await query.edit_message_text(
@@ -616,7 +576,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await show_main_menu(query)
 
 # ======================================================
-# 11. ВХОДНАЯ ТОЧКА ДЛЯ ТИКЕТА (ОТДЕЛЬНАЯ ФУНКЦИЯ)
+# 11. ВХОДНАЯ ТОЧКА ДЛЯ ТИКЕТА
 # ======================================================
 
 async def ticket_entry(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -692,7 +652,7 @@ async def ticket_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 # ======================================================
-# 13. ВХОДНАЯ ТОЧКА ДЛЯ ЗАЯВКИ В ВАЙТЛИСТ (УЖЕ БЫЛА, НО ПЕРЕИМЕНОВАНА)
+# 13. ВХОДНАЯ ТОЧКА ДЛЯ ЗАЯВКИ В ВАЙТЛИСТ
 # ======================================================
 
 async def whitelist_entry(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -888,7 +848,7 @@ def main():
     application.add_handler(CommandHandler("cancel", cancel_reject))  # отмена отклонения заявки
     application.add_handler(CommandHandler("cancel_ticket", cancel_ticket_reject))  # отмена отклонения тикета
     application.add_handler(CommandHandler("announce", announce))
-    application.add_handler(CommandHandler("tech_announce", tech_announce))
+    # application.add_handler(CommandHandler("tech_announce", tech_announce))  # УДАЛЕНО
 
     # ConversationHandler для заявок в вайтлист
     conv_whitelist = ConversationHandler(
@@ -906,7 +866,7 @@ def main():
 
     # ConversationHandler для создания тикета
     conv_ticket = ConversationHandler(
-        entry_points=[CallbackQueryHandler(ticket_entry, pattern="^ticket$")],  # отдельная функция
+        entry_points=[CallbackQueryHandler(ticket_entry, pattern="^ticket$")],
         states={
             TICKET_REASON: [MessageHandler(filters.TEXT & ~filters.COMMAND, ticket_reason)],
             TICKET_CONFIRM: [CallbackQueryHandler(ticket_confirm, pattern="^(confirm_ticket|cancel_ticket)$")],
@@ -918,8 +878,8 @@ def main():
     )
     application.add_handler(conv_ticket)
 
-    # Обработчик остальных кнопок (все, кроме ticket и whitelist, которые уже обработаны выше)
-    application.add_handler(CallbackQueryHandler(button_handler, pattern="^(news|tech|ip|back_to_menu|cancel_whitelist|cancel_ticket)$"))
+    # Обработчик остальных кнопок (все, кроме ticket и whitelist)
+    application.add_handler(CallbackQueryHandler(button_handler, pattern="^(news|ip|back_to_menu|cancel_whitelist|cancel_ticket)$"))  # <--- УДАЛЕНО 'tech'
     # Обработчики решений по заявкам и тикетам
     application.add_handler(CallbackQueryHandler(handle_decision, pattern="^(approve|reject)_"))
     application.add_handler(CallbackQueryHandler(handle_ticket_decision, pattern="^ticket_(accept|reject)_"))
