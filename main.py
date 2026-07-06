@@ -49,7 +49,6 @@ def set_news(text):
         f.write(text)
 
 def save_whitelist_request(user_id, username, name, reason, is_change=False):
-    """Сохраняет заявку. is_change=True означает заявку на изменение ника."""
     status = "change_request" if is_change else "pending"
     data = {
         "user_id": user_id,
@@ -69,7 +68,7 @@ def save_whitelist_request(user_id, username, name, reason, is_change=False):
     with open(WHITELIST_FILE, "w", encoding="utf-8") as f:
         json.dump(requests, f, ensure_ascii=False, indent=2)
     print(f"✅ Заявка сохранена: {data}")
-    return len(requests) - 1  # индекс заявки
+    return len(requests) - 1
 
 def update_request_status(index, status):
     try:
@@ -85,13 +84,11 @@ def update_request_status(index, status):
     return False
 
 def update_user_name(user_id, new_name):
-    """Обновляет имя в последней approved заявке пользователя (актуальный ник)"""
     try:
         with open(WHITELIST_FILE, "r", encoding="utf-8") as f:
             requests = json.load(f)
     except (FileNotFoundError, json.JSONDecodeError):
         return False
-    # Ищем последнюю approved заявку этого пользователя
     for req in reversed(requests):
         if req["user_id"] == user_id and req["status"] == "approved":
             req["name"] = new_name
@@ -101,7 +98,6 @@ def update_user_name(user_id, new_name):
     return False
 
 def get_last_user_request(user_id):
-    """Возвращает последнюю заявку пользователя (по дате)"""
     try:
         with open(WHITELIST_FILE, "r", encoding="utf-8") as f:
             requests = json.load(f)
@@ -110,7 +106,6 @@ def get_last_user_request(user_id):
     user_requests = [r for r in requests if r["user_id"] == user_id]
     if not user_requests:
         return None
-    # Сортируем по дате (последняя сверху)
     user_requests.sort(key=lambda x: x["date"], reverse=True)
     return user_requests[0]
 
@@ -119,7 +114,6 @@ def has_pending_request(user_id):
     return req and req["status"] == "pending"
 
 def is_user_approved(user_id):
-    """Проверяет, есть ли у пользователя одобренная заявка (актуальный вайтлист)"""
     try:
         with open(WHITELIST_FILE, "r", encoding="utf-8") as f:
             requests = json.load(f)
@@ -131,7 +125,6 @@ def is_user_approved(user_id):
     return False
 
 def get_user_current_name(user_id):
-    """Возвращает текущий ник из последней approved заявки"""
     try:
         with open(WHITELIST_FILE, "r", encoding="utf-8") as f:
             requests = json.load(f)
@@ -143,7 +136,7 @@ def get_user_current_name(user_id):
     return None
 
 # ======================================================
-# 4. ОТПРАВКА УВЕДОМЛЕНИЙ АДМИНУ С КНОПКАМИ
+# 4. ОТПРАВКА УВЕДОМЛЕНИЙ АДМИНУ
 # ======================================================
 
 async def notify_admin_with_buttons(context: ContextTypes.DEFAULT_TYPE, user, name, reason, request_index, is_change=False):
@@ -169,7 +162,7 @@ async def notify_admin_with_buttons(context: ContextTypes.DEFAULT_TYPE, user, na
     )
 
 # ======================================================
-# 5. ОБРАБОТКА РЕШЕНИЯ АДМИНА
+# 5. ОБРАБОТКА РЕШЕНИЯ АДМИНА (ИСПРАВЛЕННАЯ)
 # ======================================================
 
 async def handle_decision(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -196,15 +189,22 @@ async def handle_decision(update: Update, context: ContextTypes.DEFAULT_TYPE):
     name = request_data["name"]
     is_change = request_data.get("is_change", False)
 
+    # Проверяем, не обработана ли уже эта заявка (чтобы избежать повторных нажатий)
+    if request_data["status"] != "pending" and request_data["status"] != "change_request":
+        await query.edit_message_text(
+            text=query.message.text + "\n\n⚠️ Эта заявка уже была обработана.",
+            parse_mode="Markdown",
+            reply_markup=None
+        )
+        return
+
     if action == "approve":
         if is_change:
-            # Обновляем ник в последней approved заявке
             if update_user_name(user_id, name):
-                # Переводим заявку изменения в статус approved (чтобы не оставалась висеть)
                 update_request_status(index, "approved")
                 user_message = f"✅ Ваш ник в вайтлисте обновлён на `{name}`!"
             else:
-                # Если не найдено approved заявки (маловероятно), просто одобряем как новую
+                # Если не найдено approved заявки, просто одобряем как новую
                 update_request_status(index, "approved")
                 user_message = f"✅ Вы добавлены в вайтлист под ником `{name}`!"
         else:
@@ -214,40 +214,44 @@ async def handle_decision(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Отправляем пользователю
         try:
             await context.bot.send_message(chat_id=user_id, text=user_message, parse_mode="Markdown")
+            # Обновляем сообщение админа, убираем кнопки
+            await query.edit_message_text(
+                text=query.message.text + f"\n\n✅ Заявка **одобрена**!{' Ник обновлён.' if is_change else ''}",
+                parse_mode="Markdown",
+                reply_markup=None
+            )
+            await query.message.reply_text("✅ Пользователь уведомлён.")
         except Exception as e:
             print(f"Не удалось отправить пользователю: {e}")
-            await query.edit_message_text(f"⚠️ Не удалось отправить сообщение пользователю (он не начал диалог). Но заявка одобрена.")
-            # Убираем кнопки
-            await query.edit_message_text(text=query.message.text + "\n\n✅ Заявка **одобрена**!", parse_mode="Markdown")
-            await query.edit_message_reply_markup(reply_markup=None)
-            return
-
-        # Обновляем сообщение админа
-        await query.edit_message_text(
-            text=query.message.text + f"\n\n✅ Заявка **одобрена**!{' Ник обновлён.' if is_change else ''}",
-            parse_mode="Markdown"
-        )
-        await query.edit_message_reply_markup(reply_markup=None)
-        await query.message.reply_text("✅ Пользователь уведомлён.")
+            await query.edit_message_text(
+                text=query.message.text + f"\n\n✅ Заявка **одобрена**! (Не удалось уведомить пользователя)",
+                parse_mode="Markdown",
+                reply_markup=None
+            )
+            await query.message.reply_text("⚠️ Пользователь не был уведомлён (возможно, не начал диалог).")
 
     else:  # reject
         update_request_status(index, "rejected")
-        # Отправляем пользователю об отказе
         try:
             await context.bot.send_message(
                 chat_id=user_id,
                 text=f"❌ *Заявка отклонена.*\nПричина: {request_data['reason']}",
                 parse_mode="Markdown"
             )
+            await query.edit_message_text(
+                text=query.message.text + "\n\n❌ Заявка **отклонена**.",
+                parse_mode="Markdown",
+                reply_markup=None
+            )
+            await query.message.reply_text("✅ Пользователь уведомлён об отказе.")
         except Exception as e:
             print(f"Не удалось отправить пользователю: {e}")
-        # Обновляем сообщение админа
-        await query.edit_message_text(
-            text=query.message.text + "\n\n❌ Заявка **отклонена**.",
-            parse_mode="Markdown"
-        )
-        await query.edit_message_reply_markup(reply_markup=None)
-        await query.message.reply_text("✅ Пользователь уведомлён об отказе (если начал диалог).")
+            await query.edit_message_text(
+                text=query.message.text + "\n\n❌ Заявка **отклонена**! (Не удалось уведомить пользователя)",
+                parse_mode="Markdown",
+                reply_markup=None
+            )
+            await query.message.reply_text("⚠️ Пользователь не был уведомлён (возможно, не начал диалог).")
 
 # ======================================================
 # 6. ПОКАЗ ГЛАВНОГО МЕНЮ
@@ -290,7 +294,7 @@ async def test(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"❌ Ошибка: {e}\n\nУбедитесь, что вы написали боту первым (/start).")
 
 # ======================================================
-# 8. ОБРАБОТЧИК КНОПОК (НЕ WHITELIST)
+# 8. ОБРАБОТЧИК КНОПОК МЕНЮ
 # ======================================================
 
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -338,7 +342,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await show_main_menu(query)
 
 # ======================================================
-# 9. ВХОДНАЯ ТОЧКА ДЛЯ ЗАЯВКИ (WHITELIST) С ПРОВЕРКОЙ
+# 9. ВХОДНАЯ ТОЧКА ДЛЯ ЗАЯВКИ (С ПРОВЕРКОЙ)
 # ======================================================
 
 async def whitelist_entry(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -347,22 +351,18 @@ async def whitelist_entry(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = query.from_user
     user_id = user.id
 
-    # Проверяем последнюю заявку
     last_req = get_last_user_request(user_id)
     if last_req and last_req["status"] == "pending":
         await query.edit_message_text(
             "⏳ *У вас уже есть заявка на рассмотрении!*\nПожалуйста, дождитесь ответа администратора.",
             parse_mode="Markdown"
         )
-        # Возвращаем меню через кнопку
         keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data="back_to_menu")]]
         await query.edit_message_reply_markup(reply_markup=InlineKeyboardMarkup(keyboard))
-        return ConversationHandler.END  # Завершаем диалог
+        return ConversationHandler.END
 
-    # Проверяем, одобрен ли пользователь
     if is_user_approved(user_id):
         current_name = get_user_current_name(user_id)
-        # Предлагаем изменить ник
         keyboard = [[InlineKeyboardButton("❌ Отмена", callback_data="cancel_whitelist")]]
         await query.edit_message_text(
             f"✏️ *Вы уже в вайтлисте* (текущий ник: `{current_name}`).\n"
@@ -373,7 +373,6 @@ async def whitelist_entry(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data["is_change"] = True
         return NAME
     else:
-        # Новая заявка
         keyboard = [[InlineKeyboardButton("❌ Отмена", callback_data="cancel_whitelist")]]
         await query.edit_message_text(
             "📝 *Заявка в вайтлист*\n\nВведите ваш игровой никнейм (или нажмите Отмена):",
@@ -408,19 +407,14 @@ async def whitelist_reason(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     is_change = context.user_data.get("is_change", False)
 
-    # Сохраняем заявку
     request_index = save_whitelist_request(user.id, user.username or "без username", name, reason, is_change)
-
-    # Отправляем админу уведомление с кнопками
     await notify_admin_with_buttons(context, user, name, reason, request_index, is_change)
 
-    # Подтверждение пользователю
     if is_change:
         await update.message.reply_text("✅ Ваша заявка на изменение ника отправлена на рассмотрение!")
     else:
         await update.message.reply_text("✅ Ваша заявка отправлена на рассмотрение! Администратор скоро ответит.")
 
-    # Показываем главное меню
     await show_main_menu(update.message)
     return ConversationHandler.END
 
@@ -481,14 +475,12 @@ async def update_news(update: Update, context: ContextTypes.DEFAULT_TYPE):
 def main():
     application = Application.builder().token(TOKEN).build()
 
-    # Команды
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("menu", menu))
     application.add_handler(CommandHandler("test", test))
     application.add_handler(CommandHandler("update_news", update_news))
     application.add_handler(CommandHandler("view_requests", view_requests))
 
-    # ConversationHandler
     conv_handler = ConversationHandler(
         entry_points=[CallbackQueryHandler(whitelist_entry, pattern="^whitelist$")],
         states={
@@ -502,7 +494,6 @@ def main():
     )
     application.add_handler(conv_handler)
 
-    # Обработчики кнопок меню и решений админа
     application.add_handler(CallbackQueryHandler(button_handler, pattern="^(news|ticket|ip|back_to_menu|cancel_whitelist)$"))
     application.add_handler(CallbackQueryHandler(handle_decision, pattern="^(approve|reject)_"))
 
