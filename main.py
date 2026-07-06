@@ -192,7 +192,10 @@ async def notify_admin_with_buttons(context: ContextTypes.DEFAULT_TYPE, user, na
 
 async def handle_decision(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    await query.answer()
+    try:
+        await query.answer()
+    except Exception as e:
+        print(f"⚠️ Ошибка при answer(): {e}")
     data = query.data
     action, index_str = data.split('_')
     index = int(index_str)
@@ -314,9 +317,7 @@ async def cancel_reject(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text("Нет активной операции отклонения.")
 
-# ---------- НОВАЯ КОМАНДА ДЛЯ РАССЫЛКИ НОВОСТЕЙ ----------
 async def announce(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Отправляет новость всем пользователям (только для админа)"""
     if update.effective_user.id != ADMIN_CHAT_ID:
         await update.message.reply_text("⛔ Нет прав.")
         return
@@ -324,9 +325,7 @@ async def announce(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Укажите текст новости. Пример: /announce Текст новости")
         return
     news_text = " ".join(context.args)
-    # Сохраняем в файл
     set_news(news_text)
-    # Рассылаем всем пользователям
     users = get_users()
     if not users:
         await update.message.reply_text("❌ Нет пользователей для рассылки.")
@@ -341,7 +340,7 @@ async def announce(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 parse_mode="Markdown"
             )
             sent += 1
-            await asyncio.sleep(0.05)  # чтобы не превысить лимиты Telegram
+            await asyncio.sleep(0.05)
         except Exception as e:
             failed += 1
             print(f"Не удалось отправить пользователю {uid}: {e}")
@@ -368,9 +367,12 @@ async def show_main_menu(target, user=None):
 
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    await query.answer()
+    try:
+        await query.answer()
+    except Exception as e:
+        print(f"⚠️ Ошибка при answer(): {e}")
     data = query.data
-    add_user(query.from_user.id)  # сохраняем пользователя
+    add_user(query.from_user.id)
 
     if data == "news":
         news_text = get_news()
@@ -396,7 +398,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"Создан: {datetime.now().strftime('%d.%m.%Y %H:%M')}"
         )
         await context.bot.send_message(chat_id=ADMIN_CHAT_ID, text=text, parse_mode="Markdown")
-        # Изменяем ответ пользователю
         keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data="back_to_menu")]]
         await query.edit_message_text(
             "✅ *Тикет создан!*\n\nАдминистратор свяжется с вами в ближайшее время.",
@@ -414,7 +415,10 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def whitelist_entry(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    await query.answer()
+    try:
+        await query.answer()
+    except Exception as e:
+        print(f"⚠️ Ошибка при answer(): {e}")
     user = query.from_user
     user_id = user.id
     add_user(user_id)
@@ -571,7 +575,7 @@ def main():
     application.add_handler(CommandHandler("update_news", update_news))
     application.add_handler(CommandHandler("view_requests", view_requests))
     application.add_handler(CommandHandler("cancel", cancel_reject))
-    application.add_handler(CommandHandler("announce", announce))  # новая команда
+    application.add_handler(CommandHandler("announce", announce))
 
     conv_handler = ConversationHandler(
         entry_points=[CallbackQueryHandler(whitelist_entry, pattern="^whitelist$")],
