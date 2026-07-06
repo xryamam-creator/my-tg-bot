@@ -1,27 +1,13 @@
 import asyncio
 import json
 import os
-from datetime import datetime
-from dotenv import load_dotenv
-
-# ----- БЛОК ДЛЯ ПОДАВЛЕНИЯ ПРЕДУПРЕЖДЕНИЙ -----
 import warnings
-from telegram.warnings import PTBUserWarning
-warnings.filterwarnings("ignore", message="If 'per_message=False'", category=PTBUserWarning)
-# -----------------------------------------------
-
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes, ConversationHandler, MessageHandler, filters
-
-# ---------- ЗАГРУЖАЕМ ТОКЕН ИЗ ПЕРЕМЕННЫХ ОКРУЖЕНИЯ ----------
-load_dotenv()
-TOKEN = os.getenv('BOT_TOKEN')
-# ... остальной код
-import asyncio
-import json
-import os
 from datetime import datetime
 from dotenv import load_dotenv
+
+# ---------- ПОДАВЛЯЕМ ПРЕДУПРЕЖДЕНИЯ PTB ----------
+from telegram.warnings import PTBUserWarning
+warnings.filterwarnings("ignore", category=PTBUserWarning)
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes, ConversationHandler, MessageHandler, filters
@@ -30,19 +16,24 @@ from telegram.ext import Application, CommandHandler, CallbackQueryHandler, Cont
 load_dotenv()
 TOKEN = os.getenv('BOT_TOKEN')
 if not TOKEN:
-    raise ValueError("BOT_TOKEN не задан")
+    raise ValueError("BOT_TOKEN не задан в переменных окружения")
 
-# ---------- ВАШ ТЕЛЕГРАМ ID (узнайте через @userinfobot) ----------
-ADMIN_CHAT_ID = 1071217435  # Ваш ID
+# ---------- ВАШИ ДАННЫЕ ----------
+ADMIN_CHAT_ID = 1071217435           # Ваш Telegram ID
+SERVER_IP = "193.39.168.179:30012"   # IP сервера
+DISCORD_LINK = "https://discord.gg/JWrnSCq9H"  # Ссылка на Discord
 
-# ---------- СОСТОЯНИЯ ДЛЯ ДИАЛОГА ЗАЯВКИ ----------
+# ---------- СОСТОЯНИЯ ДЛЯ ДИАЛОГА ----------
 NAME, REASON = range(2)
 
 # ---------- ПУТИ К ФАЙЛАМ ----------
 NEWS_FILE = "news.txt"
 WHITELIST_FILE = "whitelist_requests.json"
 
-# ---------- ФУНКЦИИ ДЛЯ РАБОТЫ С НОВОСТЯМИ ----------
+# ======================================================
+# ФУНКЦИИ ДЛЯ РАБОТЫ С ФАЙЛАМИ
+# ======================================================
+
 def get_news():
     if os.path.exists(NEWS_FILE):
         with open(NEWS_FILE, "r", encoding="utf-8") as f:
@@ -53,7 +44,6 @@ def set_news(text):
     with open(NEWS_FILE, "w", encoding="utf-8") as f:
         f.write(text)
 
-# ---------- ФУНКЦИЯ ДЛЯ СОХРАНЕНИЯ ЗАЯВКИ ----------
 def save_whitelist_request(user_id, username, name, reason):
     data = {
         "user_id": user_id,
@@ -72,7 +62,10 @@ def save_whitelist_request(user_id, username, name, reason):
         json.dump(requests, f, ensure_ascii=False, indent=2)
     print(f"✅ Заявка сохранена: {data}")
 
-# ---------- УВЕДОМЛЕНИЕ АДМИНИСТРАТОРУ ----------
+# ======================================================
+# УВЕДОМЛЕНИЕ АДМИНИСТРАТОРУ
+# ======================================================
+
 async def notify_admin(context: ContextTypes.DEFAULT_TYPE, text: str):
     try:
         await context.bot.send_message(chat_id=ADMIN_CHAT_ID, text=text, parse_mode="Markdown")
@@ -80,14 +73,17 @@ async def notify_admin(context: ContextTypes.DEFAULT_TYPE, text: str):
     except Exception as e:
         print(f"❌ Ошибка отправки уведомления: {e}")
 
-# ---------- КОМАНДА /START ----------
+# ======================================================
+# КОМАНДА /start
+# ======================================================
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [
         [InlineKeyboardButton("📢 Новости", callback_data="news")],
         [InlineKeyboardButton("🎫 Создать тикет", callback_data="ticket")],
         [InlineKeyboardButton("📝 Заявка в вайтлист", callback_data="whitelist")],
         [InlineKeyboardButton("🌐 IP сервера", callback_data="ip")],
-        [InlineKeyboardButton("🔗 Ссылка на Discord", url="https://discord.gg/JWrnSCq9H")],
+        [InlineKeyboardButton("🔗 Ссылка на Discord", url=DISCORD_LINK)],
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     await update.message.reply_text(
@@ -96,7 +92,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode="Markdown"
     )
 
-# ---------- ОБРАБОТЧИК КНОПОК ----------
+# ======================================================
+# ОБРАБОТЧИК КНОПОК
+# ======================================================
+
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -113,7 +112,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     elif data == "ip":
         await query.edit_message_text(
-            "🌐 *IP сервера:*\n`193.39.168.179:30012`",
+            f"🌐 *IP сервера:*\n`{SERVER_IP}`",
             parse_mode="Markdown"
         )
         keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data="back_to_menu")]]
@@ -144,13 +143,17 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data == "back_to_menu":
         await show_menu(query)
 
+# ======================================================
+# ПОКАЗ ГЛАВНОГО МЕНЮ
+# ======================================================
+
 async def show_menu(query):
     keyboard = [
         [InlineKeyboardButton("📢 Новости", callback_data="news")],
         [InlineKeyboardButton("🎫 Создать тикет", callback_data="ticket")],
         [InlineKeyboardButton("📝 Заявка в вайтлист", callback_data="whitelist")],
         [InlineKeyboardButton("🌐 IP сервера", callback_data="ip")],
-        [InlineKeyboardButton("🔗 Ссылка на Discord", url="https://discord.gg/JWrnSCq9H")],
+        [InlineKeyboardButton("🔗 Ссылка на Discord", url=DISCORD_LINK)],
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     await query.edit_message_text(
@@ -159,7 +162,10 @@ async def show_menu(query):
         parse_mode="Markdown"
     )
 
-# ---------- ДИАЛОГ ЗАЯВКИ В ВАЙТЛИСТ ----------
+# ======================================================
+# ДИАЛОГ ЗАЯВКИ В ВАЙТЛИСТ
+# ======================================================
+
 async def whitelist_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Введите ваш игровой никнейм:")
     return NAME
@@ -187,12 +193,13 @@ async def whitelist_reason(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text("✅ Заявка отправлена!")
 
+    # Показываем главное меню
     keyboard = [
         [InlineKeyboardButton("📢 Новости", callback_data="news")],
         [InlineKeyboardButton("🎫 Создать тикет", callback_data="ticket")],
         [InlineKeyboardButton("📝 Заявка в вайтлист", callback_data="whitelist")],
         [InlineKeyboardButton("🌐 IP сервера", callback_data="ip")],
-        [InlineKeyboardButton("🔗 Ссылка на Discord", url="https://discord.gg/JWrnSCq9H")],
+        [InlineKeyboardButton("🔗 Ссылка на Discord", url=DISCORD_LINK)],
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     await update.message.reply_text(
@@ -206,7 +213,10 @@ async def whitelist_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("❌ Отменено.")
     return ConversationHandler.END
 
-# ---------- КОМАНДА ОБНОВЛЕНИЯ НОВОСТЕЙ ----------
+# ======================================================
+# КОМАНДА ОБНОВЛЕНИЯ НОВОСТЕЙ (только для админа)
+# ======================================================
+
 async def update_news(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_CHAT_ID:
         await update.message.reply_text("⛔ Нет прав.")
@@ -218,7 +228,10 @@ async def update_news(update: Update, context: ContextTypes.DEFAULT_TYPE):
     set_news(new_text)
     await update.message.reply_text(f"✅ Новости обновлены!")
 
-# ---------- КОМАНДА ПРОСМОТРА ЗАЯВОК ----------
+# ======================================================
+# КОМАНДА ПРОСМОТРА ЗАЯВОК (только для админа)
+# ======================================================
+
 async def view_requests(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_CHAT_ID:
         await update.message.reply_text("⛔ Нет прав.")
@@ -236,16 +249,27 @@ async def view_requests(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text += f"{i}. @{req.get('username', '')} — `{req.get('name', '')}`\n"
         text += f"   {req.get('reason', '')}\n"
         text += f"   {req.get('date', '')}\n\n"
-    await update.message.reply_text(text, parse_mode="Markdown")
+    
+    # Если текст слишком длинный, разбиваем
+    if len(text) > 4000:
+        for chunk in [text[i:i+4000] for i in range(0, len(text), 4000)]:
+            await update.message.reply_text(chunk, parse_mode="Markdown")
+    else:
+        await update.message.reply_text(text, parse_mode="Markdown")
 
-# ---------- ЗАПУСК ----------
+# ======================================================
+# ЗАПУСК
+# ======================================================
+
 def main():
     application = Application.builder().token(TOKEN).build()
 
+    # Регистрируем команды
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("update_news", update_news))
     application.add_handler(CommandHandler("view_requests", view_requests))
 
+    # ConversationHandler для заявки в вайтлист (без per_message, чтобы не было ошибок)
     conv_handler = ConversationHandler(
         entry_points=[CallbackQueryHandler(button_handler, pattern="^whitelist$")],
         states={
@@ -253,12 +277,14 @@ def main():
             REASON: [MessageHandler(filters.TEXT & ~filters.COMMAND, whitelist_reason)],
         },
         fallbacks=[CommandHandler("cancel", whitelist_cancel)],
-        per_message=True,   # добавлено, чтобы убрать предупреждение
     )
     application.add_handler(conv_handler)
 
+    # Обработчик остальных кнопок
     application.add_handler(CallbackQueryHandler(button_handler, pattern="^(news|ticket|ip|back_to_menu)$"))
 
+    # Запускаем бота
+    print("🚀 Бот запущен и готов к работе!")
     application.run_polling(allowed_updates=["message", "callback_query"])
 
 if __name__ == "__main__":
