@@ -26,7 +26,6 @@ SERVER_IP = "193.39.168.179:30012"
 DISCORD_LINK = "https://discord.gg/JWrnSCq9H"
 
 # ---------- СПИСОК ЗАПРЕЩЁННЫХ СЛОВ ----------
-# Добавьте сюда слова, которые считаете оскорбительными (русские и английские)
 BAD_WORDS = [
     "хуй", "пизда", "бля", "ебан", "залуп", "гандон", "мудила", "петух", "пидор",
     "лох", "шлюха", "курва", "сука", "ублюд", "сволочь", "тварь", "выродок",
@@ -34,7 +33,6 @@ BAD_WORDS = [
 ]
 
 def contains_bad_word(text):
-    """Проверяет, содержит ли текст любое запрещённое слово (регистронезависимо)."""
     if not text:
         return False
     text_lower = text.lower()
@@ -88,7 +86,7 @@ def save_whitelist_request(user_id, username, name, reason, is_change=False):
     print(f"✅ Заявка сохранена: {data}")
     return len(requests) - 1
 
-def update_request_status(index, status):
+def update_request_status(index, status, reject_reason=None):
     try:
         with open(WHITELIST_FILE, "r", encoding="utf-8") as f:
             requests = json.load(f)
@@ -96,6 +94,8 @@ def update_request_status(index, status):
         return False
     if 0 <= index < len(requests):
         requests[index]["status"] = status
+        if reject_reason is not None:
+            requests[index]["reject_reason"] = reject_reason
         with open(WHITELIST_FILE, "w", encoding="utf-8") as f:
             json.dump(requests, f, ensure_ascii=False, indent=2)
         return True
@@ -243,28 +243,63 @@ async def handle_decision(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             await query.message.reply_text("⚠️ Пользователь не был уведомлён (возможно, не начал диалог).")
 
-    else:  # reject
-        update_request_status(index, "rejected")
-        try:
-            await context.bot.send_message(
-                chat_id=user_id,
-                text=f"❌ *Заявка отклонена.*\nПричина: {request_data['reason']}",
-                parse_mode="Markdown"
-            )
-            await query.edit_message_text(
-                text=query.message.text + "\n\n❌ Заявка **отклонена**.",
-                parse_mode="Markdown",
-                reply_markup=None
-            )
-            await query.message.reply_text("✅ Пользователь уведомлён об отказе.")
-        except Exception as e:
-            print(f"Не удалось отправить пользователю: {e}")
-            await query.edit_message_text(
-                text=query.message.text + "\n\n❌ Заявка **отклонена**! (Не удалось уведомить пользователя)",
-                parse_mode="Markdown",
-                reply_markup=None
-            )
-            await query.message.reply_text("⚠️ Пользователь не был уведомлён (возможно, не начал диалог).")
+    elif action == "reject":
+        # Сохраняем индекс и просим причину
+        context.user_data['pending_reject_index'] = index
+        await query.edit_message_text(
+            text=query.message.text + "\n\n❓ Введите причину отклонения (отправьте сообщение):",
+            parse_mode="Markdown",
+            reply_markup=None
+        )
+        await query.message.reply_text(
+            "Введите причину отклонения для пользователя (или отправьте /cancel, чтобы отменить)."
+        )
+
+# ======================================================
+# 5.1 ОБРАБОТЧИК ПРИЧИНЫ ОТКЛОНЕНИЯ (ОТ АДМИНА)
+# ======================================================
+
+async def handle_reject_reason(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Проверяем, что есть ожидание причины и что это админ
+    if 'pending_reject_index' not in context.user_data:
+        return
+    if update.effective_user.id != ADMIN_CHAT_ID:
+        return
+
+    index = context.user_data.pop('pending_reject_index')
+    reason_text = update.message.text.strip()
+    if not reason_text:
+        await update.message.reply_text("❌ Причина не может быть пустой. Отправьте текст или /cancel.")
+        context.user_data['pending_reject_index'] = index  # возвращаем обратно
+        return
+
+    # Обновляем заявку с причиной отклонения
+    update_request_status(index, "rejected", reject_reason=reason_text)
+    # Получаем данные пользователя
+    try:
+        with open(WHITELIST_FILE, "r", encoding="utf-8") as f:
+            requests = json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        await update.message.reply_text("❌ Ошибка при обновлении заявки.")
+        return
+    if index >= len(requests):
+        await update.message.reply_text("❌ Заявка не найдена.")
+        return
+    request_data = requests[index]
+    user_id = request_data["user_id"]
+    user_name = request_data["name"]
+
+    # Отправляем пользователю уведомление с причиной
+    try:
+        await context.bot.send_message(
+            chat_id=user_id,
+            text=f"❌ *Заявка отклонена.*\nПричина: {reason_text}",
+            parse_mode="Markdown"
+        )
+        await update.message.reply_text(f"✅ Пользователь уведомлён об отказе с причиной: {reason_text}")
+    except Exception as e:
+        print(f"Не удалось отправить пользователю: {e}")
+        await update.message.reply_text(f"⚠️ Не удалось уведомить пользователя (он не начал диалог). Заявка отклонена с причиной: {reason_text}")
 
 # ======================================================
 # 6. ПОКАЗ ГЛАВНОГО МЕНЮ
@@ -305,6 +340,16 @@ async def test(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("✅ Тестовое сообщение отправлено вам в личку.")
     except Exception as e:
         await update.message.reply_text(f"❌ Ошибка: {e}\n\nУбедитесь, что вы написали боту первым (/start).")
+
+async def cancel_reject(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_CHAT_ID:
+        await update.message.reply_text("⛔ Нет прав.")
+        return
+    if 'pending_reject_index' in context.user_data:
+        context.user_data.pop('pending_reject_index')
+        await update.message.reply_text("❌ Отклонение отменено.")
+    else:
+        await update.message.reply_text("Нет активной операции отклонения.")
 
 # ======================================================
 # 8. ОБРАБОТЧИК КНОПОК МЕНЮ
@@ -459,7 +504,7 @@ async def whitelist_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 # ======================================================
-# 11. КОМАНДЫ ДЛЯ АДМИНА
+# 11. КОМАНДЫ ДЛЯ АДМИНА (ПРОСМОТР ЗАЯВОК, ОБНОВЛЕНИЕ НОВОСТЕЙ)
 # ======================================================
 
 async def view_requests(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -484,6 +529,8 @@ async def view_requests(update: Update, context: ContextTypes.DEFAULT_TYPE):
         }.get(req.get("status"), "⚪")
         text += f"{i}. {status_emoji} @{req.get('username', '')} — `{req.get('name', '')}`\n"
         text += f"   {req.get('reason', '')}\n"
+        if req.get("reject_reason"):
+            text += f"   ❗ Причина отказа: {req['reject_reason']}\n"
         text += f"   {req.get('date', '')}\n\n"
     
     if len(text) > 4000:
@@ -515,7 +562,9 @@ def main():
     application.add_handler(CommandHandler("test", test))
     application.add_handler(CommandHandler("update_news", update_news))
     application.add_handler(CommandHandler("view_requests", view_requests))
+    application.add_handler(CommandHandler("cancel", cancel_reject))  # для отмены отклонения
 
+    # ConversationHandler для заявки
     conv_handler = ConversationHandler(
         entry_points=[CallbackQueryHandler(whitelist_entry, pattern="^whitelist$")],
         states={
@@ -529,8 +578,12 @@ def main():
     )
     application.add_handler(conv_handler)
 
+    # Обработчик кнопок меню
     application.add_handler(CallbackQueryHandler(button_handler, pattern="^(news|ticket|ip|back_to_menu|cancel_whitelist)$"))
+    # Обработчик нажатий на одобрить/отклонить
     application.add_handler(CallbackQueryHandler(handle_decision, pattern="^(approve|reject)_"))
+    # Обработчик текстовых сообщений (для причины отклонения) — должен быть после остальных
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_reject_reason))
 
     print("🚀 Бот запущен и готов к работе!")
     application.run_polling(allowed_updates=["message", "callback_query"])
