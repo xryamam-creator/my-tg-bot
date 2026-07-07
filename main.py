@@ -949,10 +949,12 @@ def main():
     application.add_handler(CallbackQueryHandler(handle_whitelist_decision, pattern="^(approve|reject)_"))
     application.add_handler(CallbackQueryHandler(handle_amnesty_decision, pattern="^amnesty_(accept|reject)_"))
 
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message_handler))
+    # ===== ВАЖНО: СНАЧАЛА СПЕЦИФИЧНЫЕ ОБРАБОТЧИКИ ДЛЯ АДМИНА =====
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_reject_reason))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_ticket_reject_reason))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_amnesty_reject_reason))
+    # ===== ПОТОМ ОБЩИЙ ОБРАБОТЧИК ДЛЯ ПОЛЬЗОВАТЕЛЕЙ =====
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message_handler))
 
     print("🚀 Бот запущен и готов к работе!")
     application.run_polling(allowed_updates=["message", "callback_query"])
