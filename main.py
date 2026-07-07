@@ -41,7 +41,7 @@ USERS_FILE = "users.json"
 TICKETS_FILE = "tickets.json"
 BANNED_FILE = "banned_users.json"
 
-# ---- БАН-ЛИСТ ----
+# ---- БАН-ЛИСТ (для бота) ----
 def get_banned():
     if not os.path.exists(BANNED_FILE):
         with open(BANNED_FILE, "w", encoding="utf-8") as f:
@@ -392,7 +392,7 @@ async def check_ban(update: Update, context: ContextTypes.DEFAULT_TYPE):
         banned_info = get_banned().get(str(user.id), {})
         reason = banned_info.get('reason', 'Не указана')
         await update.effective_message.reply_text(
-            f"⛔ *Вы забанены!*\nПричина: {reason}\n\nОбратитесь к администратору для разблокировки.",
+            f"⛔ *Вы забанены в боте!*\nПричина: {reason}\n\nОбратитесь к администратору для разблокировки.",
             parse_mode="Markdown"
         )
         return True
@@ -400,7 +400,6 @@ async def check_ban(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ========== ОБРАБОТЧИК КНОПОК ==========
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Проверка бана
     if await check_ban(update, context):
         return
     query = update.callback_query
@@ -667,9 +666,30 @@ async def update_news(update: Update, context: ContextTypes.DEFAULT_TYPE):
     set_news(new_text)
     await update.message.reply_text("✅ Новости обновлены!")
 
+async def users_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if await check_ban(update, context):
+        return
+    if update.effective_user.id != ADMIN_CHAT_ID:
+        await update.message.reply_text("⛔ Нет прав.")
+        return
+    users = get_users()
+    if not users:
+        await update.message.reply_text("📭 Нет зарегистрированных пользователей.")
+        return
+    text = "👥 *Список пользователей:*\n\n"
+    for uid, data in users.items():
+        username = data.get('username', 'без username')
+        first_seen = data.get('first_seen', 'неизвестно')
+        try:
+            dt = datetime.fromisoformat(first_seen)
+            first_seen = dt.strftime('%d.%m.%Y %H:%M')
+        except:
+            pass
+        text += f"🔹 ID: `{uid}`\n   @{username}\n   Первое появление: {first_seen}\n\n"
+    await update.message.reply_text(text, parse_mode="Markdown")
+
 # ========== КОМАНДЫ ДЛЯ БАН-ЛИСТА ==========
 async def ban_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Бан пользователя: /ban <user_id> [причина]"""
     if await check_ban(update, context):
         return
     if update.effective_user.id != ADMIN_CHAT_ID:
@@ -691,7 +711,6 @@ async def ban_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(f"✅ Пользователь {user_id} забанен.\nПричина: {reason}")
 
 async def unban_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Разбан пользователя: /unban <user_id>"""
     if await check_ban(update, context):
         return
     if update.effective_user.id != ADMIN_CHAT_ID:
@@ -712,7 +731,6 @@ async def unban_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(f"✅ Пользователь {user_id} разбанен.")
 
 async def banned_list_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Показать список забаненных пользователей."""
     if await check_ban(update, context):
         return
     if update.effective_user.id != ADMIN_CHAT_ID:
@@ -747,9 +765,7 @@ def main():
     application.add_handler(CommandHandler("cancel", cancel_reject))
     application.add_handler(CommandHandler("cancel_ticket", cancel_ticket_reject))
     application.add_handler(CommandHandler("announce", announce))
-    application.add_handler(CommandHandler("users", users_command))  # если есть
-
-    # Команды бана
+    application.add_handler(CommandHandler("users", users_command))
     application.add_handler(CommandHandler("ban", ban_command))
     application.add_handler(CommandHandler("unban", unban_command))
     application.add_handler(CommandHandler("banned", banned_list_command))
@@ -759,9 +775,11 @@ def main():
     application.add_handler(CallbackQueryHandler(handle_ticket_decision, pattern="^ticket_(accept|reject)_"))
     application.add_handler(CallbackQueryHandler(handle_whitelist_decision, pattern="^(approve|reject)_"))
 
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message_handler))
+    # Сначала специфичные для админа
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_reject_reason))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_ticket_reject_reason))
+    # Потом общий
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message_handler))
 
     print("🚀 Бот запущен и готов к работе!")
     application.run_polling(allowed_updates=["message", "callback_query"])
