@@ -58,22 +58,26 @@ def save_requests(requests):
 def get_users():
     if not os.path.exists(USERS_FILE):
         with open(USERS_FILE, "w", encoding="utf-8") as f:
-            json.dump([], f)
-        return []
+            json.dump({}, f)
+        return {}
     try:
         with open(USERS_FILE, "r", encoding="utf-8") as f:
             return json.load(f)
     except:
-        return []
+        return {}
 
 def save_users(users):
     with open(USERS_FILE, "w", encoding="utf-8") as f:
         json.dump(users, f, ensure_ascii=False, indent=2)
 
-def add_user(user_id):
+def add_user(user_id, username=None):
     users = get_users()
-    if user_id not in users:
-        users.append(user_id)
+    user_id_str = str(user_id)
+    if user_id_str not in users:
+        users[user_id_str] = {
+            "username": username or "без username",
+            "first_seen": datetime.now().isoformat()
+        }
         save_users(users)
 
 def get_tickets():
@@ -349,7 +353,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try: await query.answer()
     except: pass
     data = query.data
-    add_user(query.from_user.id)
+    user = query.from_user
+    add_user(user.id, user.username)
 
     if data == "news":
         news_text = get_news()
@@ -363,7 +368,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         keyboard = [[InlineKeyboardButton("❌ Отмена", callback_data="cancel_ticket")]]
         await query.edit_message_text("✏️ *Создание тикета*\n\nОпишите причину обращения (или нажмите Отмена):", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
     elif data == "whitelist":
-        user = query.from_user
         user_id = user.id
         last_req = get_last_user_request(user_id)
         if last_req and last_req["status"] == "pending":
@@ -399,7 +403,9 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     text = update.message.text.strip()
     expecting = context.user_data.get('expecting')
-    print(f"📩 Получено сообщение от {user.id}, expecting={expecting}")
+
+    # Добавляем пользователя в базу при любом текстовом сообщении
+    add_user(user.id, user.username)
 
     if expecting == 'ticket_reason':
         if not text:
@@ -455,9 +461,8 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data.clear()
         await show_main_menu(update.message)
     else:
-        # Если ожидания нет, но сообщение от админа с причиной отклонения – обработаем в соответствующих обработчиках
-        # В этом обработчике мы ничего не делаем, чтобы не мешать.
-        pass
+        # Если сообщение не обработано, показываем меню
+        await show_main_menu(update.message)
 
 # ========== ОБРАБОТЧИК ПОДТВЕРЖДЕНИЯ ТИКЕТА ==========
 async def confirm_ticket(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -479,14 +484,42 @@ async def confirm_ticket(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data.clear()
         await show_main_menu(query)
 
+# ========== НОВАЯ КОМАНДА /USERS ==========
+async def users_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Показывает список всех пользователей бота (только для админа)."""
+    if update.effective_user.id != ADMIN_CHAT_ID:
+        await update.message.reply_text("⛔ Нет прав.")
+        return
+    users = get_users()
+    if not users:
+        await update.message.reply_text("📭 Нет зарегистрированных пользователей.")
+        return
+    text = "👥 *Список пользователей бота:*\n\n"
+    for uid, data in users.items():
+        username = data.get('username', 'без username')
+        first_seen = data.get('first_seen', 'неизвестно')
+        # Форматируем дату
+        try:
+            dt = datetime.fromisoformat(first_seen)
+            first_seen = dt.strftime('%d.%m.%Y %H:%M')
+        except:
+            pass
+        text += f"🔹 ID: `{uid}`\n   @{username}\n   Первое появление: {first_seen}\n\n"
+    # Если сообщение слишком длинное, разбиваем
+    if len(text) > 4000:
+        for chunk in [text[i:i+4000] for i in range(0, len(text), 4000)]:
+            await update.message.reply_text(chunk, parse_mode="Markdown")
+    else:
+        await update.message.reply_text(text, parse_mode="Markdown")
+
 # ========== КОМАНДЫ ==========
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    add_user(update.effective_user.id)
+    add_user(update.effective_user.id, update.effective_user.username)
     context.user_data.clear()
     await show_main_menu(update.message)
 
 async def menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    add_user(update.effective_user.id)
+    add_user(update.effective_user.id, update.effective_user.username)
     context.user_data.clear()
     await show_main_menu(update.message)
 
@@ -536,7 +569,7 @@ async def announce(update: Update, context: ContextTypes.DEFAULT_TYPE):
     sent = 0
     for uid in users:
         try:
-            await context.bot.send_message(chat_id=uid, text=f"📢 *НОВОСТЬ!*\n\n{news_text}", parse_mode="Markdown")
+            await context.bot.send_message(chat_id=int(uid), text=f"📢 *НОВОСТЬ!*\n\n{news_text}", parse_mode="Markdown")
             sent += 1
             await asyncio.sleep(0.05)
         except:
@@ -601,17 +634,14 @@ def main():
     application.add_handler(CommandHandler("cancel", cancel_reject))
     application.add_handler(CommandHandler("cancel_ticket", cancel_ticket_reject))
     application.add_handler(CommandHandler("announce", announce))
+    application.add_handler(CommandHandler("users", users_command))  # Новая команда
 
-    # Кнопки
     application.add_handler(CallbackQueryHandler(button_handler, pattern="^(news|ip|ticket|whitelist|back_to_menu|cancel_ticket|cancel_whitelist)$"))
     application.add_handler(CallbackQueryHandler(confirm_ticket, pattern="^(confirm_ticket|cancel_ticket)$"))
-    # Решения
     application.add_handler(CallbackQueryHandler(handle_ticket_decision, pattern="^ticket_(accept|reject)_"))
     application.add_handler(CallbackQueryHandler(handle_whitelist_decision, pattern="^(approve|reject)_"))
-    # Текстовые сообщения (общие)
+
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message_handler))
-    # Причины отклонений (от админа) – они тоже текстовые, но должны быть после общего обработчика, чтобы не перехватывать
-    # Так как они проверяют наличие ключей, они не помешают, если поставить после.
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_reject_reason))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_ticket_reject_reason))
 
