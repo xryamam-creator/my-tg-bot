@@ -42,7 +42,7 @@ TICKETS_FILE = "tickets.json"
 BANNED_FILE = "banned_users.json"
 AMNESTY_FILE = "amnesty_requests.json"
 
-# ---- БАН-ЛИСТ ----
+# ---- БАН-ЛИСТ (для бота) ----
 def get_banned():
     if not os.path.exists(BANNED_FILE):
         with open(BANNED_FILE, "w", encoding="utf-8") as f:
@@ -287,7 +287,7 @@ async def notify_admin_whitelist(context, user, name, reason, request_index, is_
     await context.bot.send_message(chat_id=ADMIN_CHAT_ID, text=text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
 
 async def notify_admin_amnesty(context, user, reason, req_id):
-    text = (f"🕊 *Заявка на амнистию!*\nОт: @{user.username or 'нет username'} (ID: `{user.id}`)\n"
+    text = (f"🕊 *Заявка на амнистию (разбан на сервере)!*\nОт: @{user.username or 'нет username'} (ID: `{user.id}`)\n"
             f"Причина: {reason}\nДата: {datetime.now().strftime('%d.%m.%Y %H:%M')}")
     keyboard = [[InlineKeyboardButton("✅ Одобрить", callback_data=f"amnesty_accept_{req_id}"),
                  InlineKeyboardButton("❌ Отклонить", callback_data=f"amnesty_reject_{req_id}")]]
@@ -445,12 +445,10 @@ async def handle_amnesty_decision(update: Update, context: ContextTypes.DEFAULT_
         except: pass
         return
     if action == "accept":
-        # Разбан
-        remove_ban(user_id)
         update_amnesty_request(req_id, "accepted")
         try:
-            await context.bot.send_message(chat_id=user_id, text=f"🕊 *Амнистия одобрена!*\nВы были разбанены. Причина: {reason}", parse_mode="Markdown")
-            await query.message.reply_text("✅ Амнистия одобрена. Пользователь разбанен.")
+            await context.bot.send_message(chat_id=user_id, text=f"🕊 *Амнистия одобрена!*\nВаша заявка на разбан на сервере принята. Администратор разбанит вас в ближайшее время.\nПричина: {reason}", parse_mode="Markdown")
+            await query.message.reply_text("✅ Амнистия одобрена. Пользователь уведомлён.")
         except Exception as e:
             await query.message.reply_text(f"✅ Одобрена, но не удалось уведомить: {e}")
         try: await query.edit_message_reply_markup(reply_markup=None)
@@ -512,14 +510,14 @@ async def show_main_menu(target, user=None):
     else:
         await target.reply_text(text, reply_markup=reply_markup, parse_mode="Markdown")
 
-# ========== ПРОВЕРКА БАНА ==========
+# ========== ПРОВЕРКА БАНА (только для бота) ==========
 async def check_ban(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     if user and is_banned(user.id):
         banned_info = get_banned().get(str(user.id), {})
         reason = banned_info.get('reason', 'Не указана')
         await update.effective_message.reply_text(
-            f"⛔ *Вы забанены!*\nПричина: {reason}\n\nОбратитесь к администратору для разблокировки.",
+            f"⛔ *Вы забанены в боте!*\nПричина: {reason}\n\nОбратитесь к администратору для разблокировки.",
             parse_mode="Markdown"
         )
         return True
@@ -567,13 +565,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             keyboard = [[InlineKeyboardButton("❌ Отмена", callback_data="cancel_whitelist")]]
             await query.edit_message_text("📝 *Заявка в вайтлист*\n\nВведите ваш игровой никнейм:", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
     elif data == "amnesty":
-        # Проверяем, забанен ли пользователь
-        if not is_banned(user.id):
-            await query.edit_message_text("✅ *Вы не в бане!* Амнистия не требуется.", parse_mode="Markdown")
-            keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data="back_to_menu")]]
-            await query.edit_message_reply_markup(reply_markup=InlineKeyboardMarkup(keyboard))
-            return
-        # Проверяем, есть ли уже pending заявка
+        # Доступно всем, без проверки на бан
         if has_pending_amnesty(user.id):
             await query.edit_message_text("⏳ *У вас уже есть заявка на амнистию на рассмотрении!*", parse_mode="Markdown")
             keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data="back_to_menu")]]
@@ -581,7 +573,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         context.user_data['expecting'] = 'amnesty_reason'
         keyboard = [[InlineKeyboardButton("❌ Отмена", callback_data="cancel_amnesty")]]
-        await query.edit_message_text("🕊 *Заявка на амнистию*\n\nОпишите причину, по которой вас стоит разбанить (или нажмите Отмена):", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
+        await query.edit_message_text("🕊 *Заявка на амнистию (разбан на сервере)*\n\nОпишите причину, по которой вас стоит разбанить (или нажмите Отмена):", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
     elif data == "back_to_menu":
         context.user_data.clear()
         await show_main_menu(query)
@@ -668,7 +660,6 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if contains_bad_word(text):
             await update.message.reply_text("🚫 *Обнаружены недопустимые слова в причине!*", parse_mode="Markdown")
             return
-        # Сохраняем заявку
         req_id = add_amnesty_request(user.id, text)
         await notify_admin_amnesty(context, user, text, req_id)
         await update.message.reply_text("✅ Ваша заявка на амнистию отправлена на рассмотрение!")
@@ -848,7 +839,7 @@ async def users_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text += f"🔹 ID: `{uid}`\n   @{username}\n   Первое появление: {first_seen}\n\n"
     await update.message.reply_text(text, parse_mode="Markdown")
 
-# ========== КОМАНДЫ ДЛЯ БАН-ЛИСТА ==========
+# ========== КОМАНДЫ ДЛЯ БАН-ЛИСТА (бота) ==========
 async def ban_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if await check_ban(update, context):
         return
@@ -923,7 +914,7 @@ async def amnesty_requests_command(update: Update, context: ContextTypes.DEFAULT
     if not requests:
         await update.message.reply_text("📭 Нет заявок на амнистию.")
         return
-    text = "🕊 *Заявки на амнистию:*\n\n"
+    text = "🕊 *Заявки на амнистию (разбан на сервере):*\n\n"
     for rid, req in requests.items():
         status_emoji = {"pending":"🟡", "accepted":"✅", "rejected":"❌"}.get(req.get("status"), "⚪")
         text += f"ID: `{rid}` {status_emoji} @{req.get('user_id')}\n   Причина: {req.get('reason')}\n"
