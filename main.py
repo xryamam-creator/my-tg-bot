@@ -39,7 +39,91 @@ NEWS_FILE = "news.txt"
 WHITELIST_FILE = "whitelist_requests.json"
 USERS_FILE = "users.json"
 TICKETS_FILE = "tickets.json"
+BANNED_FILE = "banned_users.json"
+AMNESTY_FILE = "amnesty_requests.json"
 
+# ---- БАН-ЛИСТ ----
+def get_banned():
+    if not os.path.exists(BANNED_FILE):
+        with open(BANNED_FILE, "w", encoding="utf-8") as f:
+            json.dump({}, f)
+        return {}
+    try:
+        with open(BANNED_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except:
+        return {}
+
+def save_banned(banned):
+    with open(BANNED_FILE, "w", encoding="utf-8") as f:
+        json.dump(banned, f, ensure_ascii=False, indent=2)
+
+def is_banned(user_id):
+    banned = get_banned()
+    return str(user_id) in banned
+
+def add_ban(user_id, reason="Не указана"):
+    banned = get_banned()
+    banned[str(user_id)] = {
+        "reason": reason,
+        "date": datetime.now().isoformat()
+    }
+    save_banned(banned)
+
+def remove_ban(user_id):
+    banned = get_banned()
+    if str(user_id) in banned:
+        del banned[str(user_id)]
+        save_banned(banned)
+        return True
+    return False
+
+# ---- АМНИСТИЯ ----
+def get_amnesty_requests():
+    if not os.path.exists(AMNESTY_FILE):
+        with open(AMNESTY_FILE, "w", encoding="utf-8") as f:
+            json.dump({}, f)
+        return {}
+    try:
+        with open(AMNESTY_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except:
+        return {}
+
+def save_amnesty_requests(requests):
+    with open(AMNESTY_FILE, "w", encoding="utf-8") as f:
+        json.dump(requests, f, ensure_ascii=False, indent=2)
+
+def add_amnesty_request(user_id, reason):
+    requests = get_amnesty_requests()
+    req_id = str(datetime.now().timestamp()).replace('.', '')
+    requests[req_id] = {
+        "user_id": user_id,
+        "reason": reason,
+        "status": "pending",
+        "date": datetime.now().isoformat()
+    }
+    save_amnesty_requests(requests)
+    return req_id
+
+def update_amnesty_request(req_id, status, reject_reason=None):
+    requests = get_amnesty_requests()
+    if req_id in requests:
+        requests[req_id]["status"] = status
+        if reject_reason:
+            requests[req_id]["reject_reason"] = reject_reason
+        save_amnesty_requests(requests)
+        return True
+    return False
+
+def has_pending_amnesty(user_id):
+    requests = get_amnesty_requests()
+    for req in requests.values():
+        if req["user_id"] == user_id and req["status"] == "pending":
+            return True
+    return False
+
+# ---- ОСТАЛЬНЫЕ ФУНКЦИИ ----
 def get_requests():
     if not os.path.exists(WHITELIST_FILE):
         with open(WHITELIST_FILE, "w", encoding="utf-8") as f:
@@ -202,6 +286,13 @@ async def notify_admin_whitelist(context, user, name, reason, request_index, is_
                  InlineKeyboardButton("❌ Отклонить", callback_data=f"reject_{request_index}")]]
     await context.bot.send_message(chat_id=ADMIN_CHAT_ID, text=text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
 
+async def notify_admin_amnesty(context, user, reason, req_id):
+    text = (f"🕊 *Заявка на амнистию!*\nОт: @{user.username or 'нет username'} (ID: `{user.id}`)\n"
+            f"Причина: {reason}\nДата: {datetime.now().strftime('%d.%m.%Y %H:%M')}")
+    keyboard = [[InlineKeyboardButton("✅ Одобрить", callback_data=f"amnesty_accept_{req_id}"),
+                 InlineKeyboardButton("❌ Отклонить", callback_data=f"amnesty_reject_{req_id}")]]
+    await context.bot.send_message(chat_id=ADMIN_CHAT_ID, text=text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
+
 # ========== ОБРАБОТКА РЕШЕНИЙ ==========
 async def handle_ticket_decision(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -330,6 +421,79 @@ async def handle_reject_reason(update: Update, context: ContextTypes.DEFAULT_TYP
     except Exception as e:
         await update.message.reply_text(f"⚠️ Не удалось уведомить: {reason_text}")
 
+# ---- ОБРАБОТКА РЕШЕНИЙ ПО АМНИСТИИ ----
+async def handle_amnesty_decision(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    try: await query.answer()
+    except: pass
+    data = query.data
+    parts = data.split('_')
+    if len(parts) < 3:
+        await query.message.reply_text("❌ Неверный формат.")
+        return
+    action, req_id = parts[1], parts[2]
+    requests = get_amnesty_requests()
+    if req_id not in requests:
+        await query.message.reply_text("❌ Заявка не найдена.")
+        return
+    req = requests[req_id]
+    user_id = req["user_id"]
+    reason = req["reason"]
+    if req["status"] != "pending":
+        await query.message.reply_text("⚠️ Уже обработана.")
+        try: await query.edit_message_reply_markup(reply_markup=None)
+        except: pass
+        return
+    if action == "accept":
+        # Разбан
+        remove_ban(user_id)
+        update_amnesty_request(req_id, "accepted")
+        try:
+            await context.bot.send_message(chat_id=user_id, text=f"🕊 *Амнистия одобрена!*\nВы были разбанены. Причина: {reason}", parse_mode="Markdown")
+            await query.message.reply_text("✅ Амнистия одобрена. Пользователь разбанен.")
+        except Exception as e:
+            await query.message.reply_text(f"✅ Одобрена, но не удалось уведомить: {e}")
+        try: await query.edit_message_reply_markup(reply_markup=None)
+        except: pass
+    elif action == "reject":
+        context.user_data['pending_amnesty_reject'] = req_id
+        await query.message.reply_text("❓ Введите причину отклонения (или /cancel_amnesty).")
+        try: await query.edit_message_reply_markup(reply_markup=None)
+        except: pass
+
+async def handle_amnesty_reject_reason(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_CHAT_ID:
+        return
+    if 'pending_amnesty_reject' not in context.user_data:
+        return
+    req_id = context.user_data.pop('pending_amnesty_reject')
+    reason_text = update.message.text.strip()
+    if not reason_text:
+        await update.message.reply_text("❌ Причина не может быть пустой.")
+        context.user_data['pending_amnesty_reject'] = req_id
+        return
+    update_amnesty_request(req_id, "rejected", reject_reason=reason_text)
+    requests = get_amnesty_requests()
+    if req_id not in requests:
+        await update.message.reply_text("❌ Заявка не найдена.")
+        return
+    user_id = requests[req_id]["user_id"]
+    try:
+        await context.bot.send_message(chat_id=user_id, text=f"❌ *Амнистия отклонена.*\nПричина: {reason_text}", parse_mode="Markdown")
+        await update.message.reply_text(f"✅ Пользователь уведомлён: {reason_text}")
+    except Exception as e:
+        await update.message.reply_text(f"⚠️ Не удалось уведомить: {reason_text}")
+
+async def cancel_amnesty_reject(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_CHAT_ID:
+        await update.message.reply_text("⛔ Нет прав.")
+        return
+    if 'pending_amnesty_reject' in context.user_data:
+        context.user_data.pop('pending_amnesty_reject')
+        await update.message.reply_text("❌ Отклонение амнистии отменено.")
+    else:
+        await update.message.reply_text("Нет активной операции.")
+
 # ========== ГЛАВНОЕ МЕНЮ ==========
 async def show_main_menu(target, user=None):
     keyboard = [
@@ -337,6 +501,7 @@ async def show_main_menu(target, user=None):
         [InlineKeyboardButton("🎫 Создать тикет", callback_data="ticket")],
         [InlineKeyboardButton("📝 Заявка в вайтлист", callback_data="whitelist")],
         [InlineKeyboardButton("🌐 IP сервера", callback_data="ip")],
+        [InlineKeyboardButton("🕊 Амнистия", callback_data="amnesty")],
         [InlineKeyboardButton("🔊 Скачать мод", url="https://modrinth.com/mod/plasmo-voice")],
         [InlineKeyboardButton("🔗 Ссылка на Discord", url=DISCORD_LINK)],
     ]
@@ -347,8 +512,23 @@ async def show_main_menu(target, user=None):
     else:
         await target.reply_text(text, reply_markup=reply_markup, parse_mode="Markdown")
 
+# ========== ПРОВЕРКА БАНА ==========
+async def check_ban(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    if user and is_banned(user.id):
+        banned_info = get_banned().get(str(user.id), {})
+        reason = banned_info.get('reason', 'Не указана')
+        await update.effective_message.reply_text(
+            f"⛔ *Вы забанены!*\nПричина: {reason}\n\nОбратитесь к администратору для разблокировки.",
+            parse_mode="Markdown"
+        )
+        return True
+    return False
+
 # ========== ОБРАБОТЧИК КНОПОК ==========
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if await check_ban(update, context):
+        return
     query = update.callback_query
     try: await query.answer()
     except: pass
@@ -386,6 +566,22 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context.user_data['is_change'] = False
             keyboard = [[InlineKeyboardButton("❌ Отмена", callback_data="cancel_whitelist")]]
             await query.edit_message_text("📝 *Заявка в вайтлист*\n\nВведите ваш игровой никнейм:", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
+    elif data == "amnesty":
+        # Проверяем, забанен ли пользователь
+        if not is_banned(user.id):
+            await query.edit_message_text("✅ *Вы не в бане!* Амнистия не требуется.", parse_mode="Markdown")
+            keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data="back_to_menu")]]
+            await query.edit_message_reply_markup(reply_markup=InlineKeyboardMarkup(keyboard))
+            return
+        # Проверяем, есть ли уже pending заявка
+        if has_pending_amnesty(user.id):
+            await query.edit_message_text("⏳ *У вас уже есть заявка на амнистию на рассмотрении!*", parse_mode="Markdown")
+            keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data="back_to_menu")]]
+            await query.edit_message_reply_markup(reply_markup=InlineKeyboardMarkup(keyboard))
+            return
+        context.user_data['expecting'] = 'amnesty_reason'
+        keyboard = [[InlineKeyboardButton("❌ Отмена", callback_data="cancel_amnesty")]]
+        await query.edit_message_text("🕊 *Заявка на амнистию*\n\nОпишите причину, по которой вас стоит разбанить (или нажмите Отмена):", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
     elif data == "back_to_menu":
         context.user_data.clear()
         await show_main_menu(query)
@@ -397,14 +593,19 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data.pop('expecting', None)
         await query.edit_message_text("❌ Заявка отменена.")
         await show_main_menu(query)
+    elif data == "cancel_amnesty":
+        context.user_data.pop('expecting', None)
+        await query.edit_message_text("❌ Заявка на амнистию отменена.")
+        await show_main_menu(query)
 
 # ========== ОБРАБОТЧИК ТЕКСТОВЫХ СООБЩЕНИЙ ==========
 async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if await check_ban(update, context):
+        return
     user = update.effective_user
     text = update.message.text.strip()
     expecting = context.user_data.get('expecting')
 
-    # Добавляем пользователя в базу при любом текстовом сообщении
     add_user(user.id, user.username)
 
     if expecting == 'ticket_reason':
@@ -460,12 +661,26 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("✅ Ваша заявка отправлена на рассмотрение! Администратор скоро ответит.")
         context.user_data.clear()
         await show_main_menu(update.message)
+    elif expecting == 'amnesty_reason':
+        if not text:
+            await update.message.reply_text("❌ Причина не может быть пустой. Напишите текст:")
+            return
+        if contains_bad_word(text):
+            await update.message.reply_text("🚫 *Обнаружены недопустимые слова в причине!*", parse_mode="Markdown")
+            return
+        # Сохраняем заявку
+        req_id = add_amnesty_request(user.id, text)
+        await notify_admin_amnesty(context, user, text, req_id)
+        await update.message.reply_text("✅ Ваша заявка на амнистию отправлена на рассмотрение!")
+        context.user_data.clear()
+        await show_main_menu(update.message)
     else:
-        # Если сообщение не обработано, показываем меню
         await show_main_menu(update.message)
 
 # ========== ОБРАБОТЧИК ПОДТВЕРЖДЕНИЯ ТИКЕТА ==========
 async def confirm_ticket(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if await check_ban(update, context):
+        return
     query = update.callback_query
     try: await query.answer()
     except: pass
@@ -484,46 +699,24 @@ async def confirm_ticket(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data.clear()
         await show_main_menu(query)
 
-# ========== НОВАЯ КОМАНДА /USERS ==========
-async def users_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Показывает список всех пользователей бота (только для админа)."""
-    if update.effective_user.id != ADMIN_CHAT_ID:
-        await update.message.reply_text("⛔ Нет прав.")
-        return
-    users = get_users()
-    if not users:
-        await update.message.reply_text("📭 Нет зарегистрированных пользователей.")
-        return
-    text = "👥 *Список пользователей бота:*\n\n"
-    for uid, data in users.items():
-        username = data.get('username', 'без username')
-        first_seen = data.get('first_seen', 'неизвестно')
-        # Форматируем дату
-        try:
-            dt = datetime.fromisoformat(first_seen)
-            first_seen = dt.strftime('%d.%m.%Y %H:%M')
-        except:
-            pass
-        text += f"🔹 ID: `{uid}`\n   @{username}\n   Первое появление: {first_seen}\n\n"
-    # Если сообщение слишком длинное, разбиваем
-    if len(text) > 4000:
-        for chunk in [text[i:i+4000] for i in range(0, len(text), 4000)]:
-            await update.message.reply_text(chunk, parse_mode="Markdown")
-    else:
-        await update.message.reply_text(text, parse_mode="Markdown")
-
 # ========== КОМАНДЫ ==========
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if await check_ban(update, context):
+        return
     add_user(update.effective_user.id, update.effective_user.username)
     context.user_data.clear()
     await show_main_menu(update.message)
 
 async def menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if await check_ban(update, context):
+        return
     add_user(update.effective_user.id, update.effective_user.username)
     context.user_data.clear()
     await show_main_menu(update.message)
 
 async def test(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if await check_ban(update, context):
+        return
     if update.effective_user.id != ADMIN_CHAT_ID:
         await update.message.reply_text("⛔ Нет прав.")
         return
@@ -534,6 +727,8 @@ async def test(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"❌ Ошибка: {e}")
 
 async def cancel_reject(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if await check_ban(update, context):
+        return
     if update.effective_user.id != ADMIN_CHAT_ID:
         await update.message.reply_text("⛔ Нет прав.")
         return
@@ -544,6 +739,8 @@ async def cancel_reject(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Нет активной операции.")
 
 async def cancel_ticket_reject(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if await check_ban(update, context):
+        return
     if update.effective_user.id != ADMIN_CHAT_ID:
         await update.message.reply_text("⛔ Нет прав.")
         return
@@ -554,6 +751,8 @@ async def cancel_ticket_reject(update: Update, context: ContextTypes.DEFAULT_TYP
         await update.message.reply_text("Нет активной операции.")
 
 async def announce(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if await check_ban(update, context):
+        return
     if update.effective_user.id != ADMIN_CHAT_ID:
         await update.message.reply_text("⛔ Нет прав.")
         return
@@ -577,6 +776,8 @@ async def announce(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(f"✅ Разослано {sent} пользователям.")
 
 async def view_requests(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if await check_ban(update, context):
+        return
     if update.effective_user.id != ADMIN_CHAT_ID:
         await update.message.reply_text("⛔ Нет прав.")
         return
@@ -594,6 +795,8 @@ async def view_requests(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(text, parse_mode="Markdown")
 
 async def view_tickets(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if await check_ban(update, context):
+        return
     if update.effective_user.id != ADMIN_CHAT_ID:
         await update.message.reply_text("⛔ Нет прав.")
         return
@@ -611,6 +814,8 @@ async def view_tickets(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(text, parse_mode="Markdown")
 
 async def update_news(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if await check_ban(update, context):
+        return
     if update.effective_user.id != ADMIN_CHAT_ID:
         await update.message.reply_text("⛔ Нет прав.")
         return
@@ -620,6 +825,112 @@ async def update_news(update: Update, context: ContextTypes.DEFAULT_TYPE):
     new_text = " ".join(context.args)
     set_news(new_text)
     await update.message.reply_text("✅ Новости обновлены!")
+
+async def users_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if await check_ban(update, context):
+        return
+    if update.effective_user.id != ADMIN_CHAT_ID:
+        await update.message.reply_text("⛔ Нет прав.")
+        return
+    users = get_users()
+    if not users:
+        await update.message.reply_text("📭 Нет зарегистрированных пользователей.")
+        return
+    text = "👥 *Список пользователей:*\n\n"
+    for uid, data in users.items():
+        username = data.get('username', 'без username')
+        first_seen = data.get('first_seen', 'неизвестно')
+        try:
+            dt = datetime.fromisoformat(first_seen)
+            first_seen = dt.strftime('%d.%m.%Y %H:%M')
+        except:
+            pass
+        text += f"🔹 ID: `{uid}`\n   @{username}\n   Первое появление: {first_seen}\n\n"
+    await update.message.reply_text(text, parse_mode="Markdown")
+
+# ========== КОМАНДЫ ДЛЯ БАН-ЛИСТА ==========
+async def ban_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if await check_ban(update, context):
+        return
+    if update.effective_user.id != ADMIN_CHAT_ID:
+        await update.message.reply_text("⛔ Нет прав.")
+        return
+    if not context.args:
+        await update.message.reply_text("❌ Укажите ID пользователя. Пример: /ban 123456789 Причина")
+        return
+    try:
+        user_id = int(context.args[0])
+        reason = " ".join(context.args[1:]) if len(context.args) > 1 else "Не указана"
+    except ValueError:
+        await update.message.reply_text("❌ ID должен быть числом.")
+        return
+    if is_banned(user_id):
+        await update.message.reply_text(f"⚠️ Пользователь {user_id} уже забанен.")
+        return
+    add_ban(user_id, reason)
+    await update.message.reply_text(f"✅ Пользователь {user_id} забанен.\nПричина: {reason}")
+
+async def unban_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if await check_ban(update, context):
+        return
+    if update.effective_user.id != ADMIN_CHAT_ID:
+        await update.message.reply_text("⛔ Нет прав.")
+        return
+    if not context.args:
+        await update.message.reply_text("❌ Укажите ID пользователя. Пример: /unban 123456789")
+        return
+    try:
+        user_id = int(context.args[0])
+    except ValueError:
+        await update.message.reply_text("❌ ID должен быть числом.")
+        return
+    if not is_banned(user_id):
+        await update.message.reply_text(f"⚠️ Пользователь {user_id} не в бане.")
+        return
+    remove_ban(user_id)
+    await update.message.reply_text(f"✅ Пользователь {user_id} разбанен.")
+
+async def banned_list_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if await check_ban(update, context):
+        return
+    if update.effective_user.id != ADMIN_CHAT_ID:
+        await update.message.reply_text("⛔ Нет прав.")
+        return
+    banned = get_banned()
+    if not banned:
+        await update.message.reply_text("📭 Нет забаненных пользователей.")
+        return
+    text = "⛔ *Список забаненных пользователей:*\n\n"
+    for uid, data in banned.items():
+        reason = data.get('reason', 'Не указана')
+        date = data.get('date', 'неизвестно')
+        try:
+            dt = datetime.fromisoformat(date)
+            date = dt.strftime('%d.%m.%Y %H:%M')
+        except:
+            pass
+        text += f"🔹 ID: `{uid}`\n   Причина: {reason}\n   Дата: {date}\n\n"
+    await update.message.reply_text(text, parse_mode="Markdown")
+
+# ========== КОМАНДА ДЛЯ ПРОСМОТРА ЗАЯВОК НА АМНИСТИЮ ==========
+async def amnesty_requests_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if await check_ban(update, context):
+        return
+    if update.effective_user.id != ADMIN_CHAT_ID:
+        await update.message.reply_text("⛔ Нет прав.")
+        return
+    requests = get_amnesty_requests()
+    if not requests:
+        await update.message.reply_text("📭 Нет заявок на амнистию.")
+        return
+    text = "🕊 *Заявки на амнистию:*\n\n"
+    for rid, req in requests.items():
+        status_emoji = {"pending":"🟡", "accepted":"✅", "rejected":"❌"}.get(req.get("status"), "⚪")
+        text += f"ID: `{rid}` {status_emoji} @{req.get('user_id')}\n   Причина: {req.get('reason')}\n"
+        if req.get("reject_reason"):
+            text += f"   ❗ {req['reject_reason']}\n"
+        text += f"   Дата: {req.get('date')}\n\n"
+    await update.message.reply_text(text, parse_mode="Markdown")
 
 # ========== ЗАПУСК ==========
 def main():
@@ -633,17 +944,24 @@ def main():
     application.add_handler(CommandHandler("view_tickets", view_tickets))
     application.add_handler(CommandHandler("cancel", cancel_reject))
     application.add_handler(CommandHandler("cancel_ticket", cancel_ticket_reject))
+    application.add_handler(CommandHandler("cancel_amnesty", cancel_amnesty_reject))
     application.add_handler(CommandHandler("announce", announce))
-    application.add_handler(CommandHandler("users", users_command))  # Новая команда
+    application.add_handler(CommandHandler("users", users_command))
+    application.add_handler(CommandHandler("ban", ban_command))
+    application.add_handler(CommandHandler("unban", unban_command))
+    application.add_handler(CommandHandler("banned", banned_list_command))
+    application.add_handler(CommandHandler("amnesty_requests", amnesty_requests_command))
 
-    application.add_handler(CallbackQueryHandler(button_handler, pattern="^(news|ip|ticket|whitelist|back_to_menu|cancel_ticket|cancel_whitelist)$"))
+    application.add_handler(CallbackQueryHandler(button_handler, pattern="^(news|ip|ticket|whitelist|amnesty|back_to_menu|cancel_ticket|cancel_whitelist|cancel_amnesty)$"))
     application.add_handler(CallbackQueryHandler(confirm_ticket, pattern="^(confirm_ticket|cancel_ticket)$"))
     application.add_handler(CallbackQueryHandler(handle_ticket_decision, pattern="^ticket_(accept|reject)_"))
     application.add_handler(CallbackQueryHandler(handle_whitelist_decision, pattern="^(approve|reject)_"))
+    application.add_handler(CallbackQueryHandler(handle_amnesty_decision, pattern="^amnesty_(accept|reject)_"))
 
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message_handler))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_reject_reason))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_ticket_reject_reason))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_amnesty_reject_reason))
 
     print("🚀 Бот запущен и готов к работе!")
     application.run_polling(allowed_updates=["message", "callback_query"])
