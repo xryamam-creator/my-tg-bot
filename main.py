@@ -1,6 +1,7 @@
 import asyncio
 import json
 import os
+import re
 import warnings
 from datetime import datetime
 from dotenv import load_dotenv
@@ -33,6 +34,16 @@ def contains_bad_word(text):
         if word in text_lower:
             return True
     return False
+
+# ========== ЭКРАНИРОВАНИЕ ДЛЯ MARKDOWN ==========
+def escape_markdown(text):
+    """Экранирует специальные символы Markdown (кроме обратных кавычек для кода)."""
+    if not text:
+        return ""
+    # Экранируем: _ * [ ] ( ) ~ ` > # + - = | { } . !
+    # Для простоты оставляем обратные кавычки, так как они используются для кода
+    escape_chars = r'_*[]()~`>#+-=|{}.!'
+    return re.sub(r'([%s])' % re.escape(escape_chars), r'\\\1', text)
 
 # ========== РАБОТА С ФАЙЛАМИ ==========
 NEWS_FILE = "news.txt"
@@ -224,17 +235,18 @@ def get_user_current_name(user_id):
 
 # ========== УВЕДОМЛЕНИЯ ==========
 async def notify_admin_ticket(context, user, reason, ticket_id):
-    text = (f"🎫 *Новый тикет!*\nОт: @{user.username or 'нет username'} (ID: `{user.id}`)\n"
-            f"Причина: {reason}\nДата: {datetime.now().strftime('%d.%m.%Y %H:%M')}")
+    text = (f"🎫 *Новый тикет!*\nОт: @{escape_markdown(user.username or 'нет username')} (ID: `{user.id}`)\n"
+            f"Причина: {escape_markdown(reason)}\n"
+            f"Дата: {datetime.now().strftime('%d.%m.%Y %H:%M')}")
     keyboard = [[InlineKeyboardButton("✅ Принять", callback_data=f"ticket_accept_{ticket_id}"),
                  InlineKeyboardButton("❌ Отклонить", callback_data=f"ticket_reject_{ticket_id}")]]
     await context.bot.send_message(chat_id=ADMIN_CHAT_ID, text=text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
 
 async def notify_admin_whitelist(context, user, name, reason, request_index, is_change=False):
     text = (f"📝 *{'Заявка на изменение ника' if is_change else 'Новая заявка в вайтлист'}!*\n"
-            f"От: @{user.username or 'нет username'} (ID: `{user.id}`)\n"
-            f"{'Новый' if is_change else 'Игровой'} ник: `{name}`\n"
-            f"{'Причина изменения' if is_change else 'Причина'}: {reason}\n"
+            f"От: @{escape_markdown(user.username or 'нет username')} (ID: `{user.id}`)\n"
+            f"{'Новый' if is_change else 'Игровой'} ник: `{escape_markdown(name)}`\n"
+            f"{'Причина изменения' if is_change else 'Причина'}: {escape_markdown(reason)}\n"
             f"Дата: {datetime.now().strftime('%d.%m.%Y %H:%M')}")
     keyboard = [[InlineKeyboardButton("✅ Одобрить", callback_data=f"approve_{request_index}"),
                  InlineKeyboardButton("❌ Отклонить", callback_data=f"reject_{request_index}")]]
@@ -266,7 +278,7 @@ async def handle_ticket_decision(update: Update, context: ContextTypes.DEFAULT_T
     if action == "accept":
         update_ticket_status(ticket_id, "accepted")
         try:
-            await context.bot.send_message(chat_id=user_id, text=f"✅ *Ваш тикет принят!*\nПричина: {reason}\nАдминистратор свяжется.", parse_mode="Markdown")
+            await context.bot.send_message(chat_id=user_id, text=f"✅ *Ваш тикет принят!*\nПричина: {escape_markdown(reason)}\nАдминистратор свяжется.", parse_mode="Markdown")
             await query.message.reply_text("✅ Тикет принят. Пользователь уведомлён.")
         except Exception as e:
             await query.message.reply_text(f"✅ Принят, но не удалось уведомить: {e}")
@@ -296,7 +308,7 @@ async def handle_ticket_reject_reason(update: Update, context: ContextTypes.DEFA
         return
     user_id = tickets[ticket_id]["user_id"]
     try:
-        await context.bot.send_message(chat_id=user_id, text=f"❌ *Ваш тикет отклонён.*\nПричина: {reason_text}", parse_mode="Markdown")
+        await context.bot.send_message(chat_id=user_id, text=f"❌ *Ваш тикет отклонён.*\nПричина: {escape_markdown(reason_text)}", parse_mode="Markdown")
         await update.message.reply_text(f"✅ Пользователь уведомлён: {reason_text}")
     except Exception as e:
         await update.message.reply_text(f"⚠️ Не удалось уведомить: {reason_text}")
@@ -325,13 +337,13 @@ async def handle_whitelist_decision(update: Update, context: ContextTypes.DEFAUL
         if is_change:
             if update_user_name(user_id, name):
                 update_request_status(index, "approved")
-                user_message = f"✅ Ваш ник обновлён на `{name}`!"
+                user_message = f"✅ Ваш ник обновлён на `{escape_markdown(name)}`!"
             else:
                 update_request_status(index, "approved")
-                user_message = f"✅ Вы добавлены в вайтлист под ником `{name}`!"
+                user_message = f"✅ Вы добавлены в вайтлист под ником `{escape_markdown(name)}`!"
         else:
             update_request_status(index, "approved")
-            user_message = f"✅ *Поздравляем!* Вы добавлены в вайтлист под ником `{name}`!"
+            user_message = f"✅ *Поздравляем!* Вы добавлены в вайтлист под ником `{escape_markdown(name)}`!"
         try:
             await context.bot.send_message(chat_id=user_id, text=user_message, parse_mode="Markdown")
             await query.message.reply_text("✅ Заявка одобрена. Пользователь уведомлён.")
@@ -363,7 +375,7 @@ async def handle_reject_reason(update: Update, context: ContextTypes.DEFAULT_TYP
         return
     user_id = requests[index]["user_id"]
     try:
-        await context.bot.send_message(chat_id=user_id, text=f"❌ *Заявка отклонена.*\nПричина: {reason_text}", parse_mode="Markdown")
+        await context.bot.send_message(chat_id=user_id, text=f"❌ *Заявка отклонена.*\nПричина: {escape_markdown(reason_text)}", parse_mode="Markdown")
         await update.message.reply_text(f"✅ Пользователь уведомлён: {reason_text}")
     except Exception as e:
         await update.message.reply_text(f"⚠️ Не удалось уведомить: {reason_text}")
@@ -392,7 +404,7 @@ async def check_ban(update: Update, context: ContextTypes.DEFAULT_TYPE):
         banned_info = get_banned().get(str(user.id), {})
         reason = banned_info.get('reason', 'Не указана')
         await update.effective_message.reply_text(
-            f"⛔ *Вы забанены в боте!*\nПричина: {reason}\n\nОбратитесь к администратору для разблокировки.",
+            f"⛔ *Вы забанены в боте!*\nПричина: {escape_markdown(reason)}\n\nОбратитесь к администратору для разблокировки.",
             parse_mode="Markdown"
         )
         return True
@@ -412,7 +424,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data == "news":
         news_text = get_news()
         keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data="back_to_menu")]]
-        await query.edit_message_text(f"📰 *Новости:*\n\n{news_text}", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
+        await query.edit_message_text(f"📰 *Новости:*\n\n{escape_markdown(news_text)}", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
     elif data == "ip":
         keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data="back_to_menu")]]
         await query.edit_message_text(f"🌐 *IP сервера:*\n`{SERVER_IP}`", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
@@ -433,7 +445,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context.user_data['expecting'] = 'whitelist_new_name'
             context.user_data['is_change'] = True
             keyboard = [[InlineKeyboardButton("❌ Отмена", callback_data="cancel_whitelist")]]
-            await query.edit_message_text(f"✏️ *Вы уже в вайтлисте* (текущий ник: `{current_name}`).\nВведите **новый никнейм** для изменения:", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
+            await query.edit_message_text(f"✏️ *Вы уже в вайтлисте* (текущий ник: `{escape_markdown(current_name)}`).\nВведите **новый никнейм** для изменения:", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
         else:
             context.user_data['expecting'] = 'whitelist_name'
             context.user_data['is_change'] = False
@@ -469,7 +481,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data['expecting'] = None
         keyboard = [[InlineKeyboardButton("✅ Да, создать", callback_data="confirm_ticket"),
                      InlineKeyboardButton("❌ Нет, отмена", callback_data="cancel_ticket")]]
-        await update.message.reply_text(f"✏️ *Вы ввели причину:*\n{text}\n\nПодтвердите создание тикета:", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
+        await update.message.reply_text(f"✏️ *Вы ввели причину:*\n{escape_markdown(text)}\n\nПодтвердите создание тикета:", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
     elif expecting == 'whitelist_name':
         if not text:
             await update.message.reply_text("❌ Никнейм не может быть пустым. Попробуйте снова:")
@@ -608,7 +620,7 @@ async def announce(update: Update, context: ContextTypes.DEFAULT_TYPE):
     sent = 0
     for uid in users:
         try:
-            await context.bot.send_message(chat_id=int(uid), text=f"📢 *НОВОСТЬ!*\n\n{news_text}", parse_mode="Markdown")
+            await context.bot.send_message(chat_id=int(uid), text=f"📢 *НОВОСТЬ!*\n\n{escape_markdown(news_text)}", parse_mode="Markdown")
             sent += 1
             await asyncio.sleep(0.05)
         except:
@@ -628,9 +640,9 @@ async def view_requests(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = "📋 *Все заявки:*\n"
     for i, req in enumerate(requests, 1):
         status_emoji = {"pending":"🟡","approved":"✅","rejected":"❌","change_request":"🔄"}.get(req.get("status"),"⚪")
-        text += f"{i}. {status_emoji} @{req.get('username')} — `{req.get('name')}`\n   {req.get('reason')}\n"
+        text += f"{i}. {status_emoji} @{escape_markdown(req.get('username', ''))} — `{escape_markdown(req.get('name', ''))}`\n   {escape_markdown(req.get('reason', ''))}\n"
         if req.get("reject_reason"):
-            text += f"   ❗ {req['reject_reason']}\n"
+            text += f"   ❗ {escape_markdown(req['reject_reason'])}\n"
         text += f"   {req.get('date')}\n\n"
     await update.message.reply_text(text, parse_mode="Markdown")
 
@@ -647,9 +659,9 @@ async def view_tickets(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = "📋 *Все тикеты:*\n"
     for tid, data in tickets.items():
         status_emoji = {"pending":"🟡","accepted":"✅","rejected":"❌"}.get(data.get("status"),"⚪")
-        text += f"ID: `{tid}` {status_emoji} @{data.get('user_id')}\n   Причина: {data.get('reason')}\n"
+        text += f"ID: `{tid}` {status_emoji} @{data.get('user_id')}\n   Причина: {escape_markdown(data.get('reason', ''))}\n"
         if data.get("reject_reason"):
-            text += f"   ❗ {data['reject_reason']}\n"
+            text += f"   ❗ {escape_markdown(data['reject_reason'])}\n"
         text += f"   {data.get('date')}\n\n"
     await update.message.reply_text(text, parse_mode="Markdown")
 
@@ -678,7 +690,7 @@ async def users_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     text = "👥 *Список пользователей:*\n\n"
     for uid, data in users.items():
-        username = data.get('username', 'без username')
+        username = escape_markdown(data.get('username', 'без username'))
         first_seen = data.get('first_seen', 'неизвестно')
         try:
             dt = datetime.fromisoformat(first_seen)
@@ -708,7 +720,7 @@ async def ban_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"⚠️ Пользователь {user_id} уже забанен.")
         return
     add_ban(user_id, reason)
-    await update.message.reply_text(f"✅ Пользователь {user_id} забанен.\nПричина: {reason}")
+    await update.message.reply_text(f"✅ Пользователь {user_id} забанен.\nПричина: {escape_markdown(reason)}")
 
 async def unban_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if await check_ban(update, context):
@@ -742,7 +754,7 @@ async def banned_list_command(update: Update, context: ContextTypes.DEFAULT_TYPE
         return
     text = "⛔ *Список забаненных пользователей:*\n\n"
     for uid, data in banned.items():
-        reason = data.get('reason', 'Не указана')
+        reason = escape_markdown(data.get('reason', 'Не указана'))
         date = data.get('date', 'неизвестно')
         try:
             dt = datetime.fromisoformat(date)
@@ -775,10 +787,8 @@ def main():
     application.add_handler(CallbackQueryHandler(handle_ticket_decision, pattern="^ticket_(accept|reject)_"))
     application.add_handler(CallbackQueryHandler(handle_whitelist_decision, pattern="^(approve|reject)_"))
 
-    # Сначала специфичные для админа
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_reject_reason))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_ticket_reject_reason))
-    # Потом общий
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message_handler))
 
     print("🚀 Бот запущен и готов к работе!")
