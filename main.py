@@ -37,11 +37,9 @@ def contains_bad_word(text):
 
 # ========== ЭКРАНИРОВАНИЕ ДЛЯ MARKDOWN ==========
 def escape_markdown(text):
-    """Экранирует специальные символы Markdown (кроме обратных кавычек для кода)."""
+    """Экранирует специальные символы Markdown (кроме обратных кавычек)."""
     if not text:
         return ""
-    # Экранируем: _ * [ ] ( ) ~ ` > # + - = | { } . !
-    # Для простоты оставляем обратные кавычки, так как они используются для кода
     escape_chars = r'_*[]()~`>#+-=|{}.!'
     return re.sub(r'([%s])' % re.escape(escape_chars), r'\\\1', text)
 
@@ -678,6 +676,7 @@ async def update_news(update: Update, context: ContextTypes.DEFAULT_TYPE):
     set_news(new_text)
     await update.message.reply_text("✅ Новости обновлены!")
 
+# ========== ИСПРАВЛЕННАЯ КОМАНДА /users (БЕЗ MARKDOWN) ==========
 async def users_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if await check_ban(update, context):
         return
@@ -688,17 +687,17 @@ async def users_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not users:
         await update.message.reply_text("📭 Нет зарегистрированных пользователей.")
         return
-    text = "👥 *Список пользователей:*\n\n"
+    text = "👥 Список пользователей:\n\n"
     for uid, data in users.items():
-        username = escape_markdown(data.get('username', 'без username'))
+        username = data.get('username', 'без username')
         first_seen = data.get('first_seen', 'неизвестно')
         try:
             dt = datetime.fromisoformat(first_seen)
             first_seen = dt.strftime('%d.%m.%Y %H:%M')
         except:
             pass
-        text += f"🔹 ID: `{uid}`\n   @{username}\n   Первое появление: {first_seen}\n\n"
-    await update.message.reply_text(text, parse_mode="Markdown")
+        text += f"ID: {uid}\nUsername: @{username}\nПервое появление: {first_seen}\n\n"
+    await update.message.reply_text(text)  # parse_mode по умолчанию None
 
 # ========== КОМАНДЫ ДЛЯ БАН-ЛИСТА ==========
 async def ban_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -752,17 +751,17 @@ async def banned_list_command(update: Update, context: ContextTypes.DEFAULT_TYPE
     if not banned:
         await update.message.reply_text("📭 Нет забаненных пользователей.")
         return
-    text = "⛔ *Список забаненных пользователей:*\n\n"
+    text = "⛔ Список забаненных пользователей:\n\n"
     for uid, data in banned.items():
-        reason = escape_markdown(data.get('reason', 'Не указана'))
+        reason = data.get('reason', 'Не указана')
         date = data.get('date', 'неизвестно')
         try:
             dt = datetime.fromisoformat(date)
             date = dt.strftime('%d.%m.%Y %H:%M')
         except:
             pass
-        text += f"🔹 ID: `{uid}`\n   Причина: {reason}\n   Дата: {date}\n\n"
-    await update.message.reply_text(text, parse_mode="Markdown")
+        text += f"ID: {uid}\nПричина: {reason}\nДата: {date}\n\n"
+    await update.message.reply_text(text)  # parse_mode None
 
 # ========== ЗАПУСК ==========
 def main():
