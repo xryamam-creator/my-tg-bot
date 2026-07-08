@@ -11,6 +11,7 @@ warnings.filterwarnings("ignore", category=PTBUserWarning)
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes, MessageHandler, filters
+from telegram.request import HTTPXRequest   # <-- импорт для кастомизации
 
 # ========== КОНФИГ ==========
 load_dotenv()
@@ -619,7 +620,7 @@ async def announce(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             await context.bot.send_message(chat_id=int(uid), text=f"📢 *НОВОСТЬ!*\n\n{escape_markdown(news_text)}", parse_mode="Markdown")
             sent += 1
-            await asyncio.sleep(0.05)
+            await asyncio.sleep(0.1)   # увеличил задержку для снижения нагрузки
         except Exception as e:
             failed += 1
             print(f"❌ Ошибка отправки пользователю {uid}: {e}")
@@ -790,7 +791,16 @@ async def users_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ========== ЗАПУСК ==========
 def main():
-    application = Application.builder().token(TOKEN).build()
+    # Кастомизируем HTTPXRequest для увеличения пула соединений
+    request = HTTPXRequest(
+        connection_pool_size=100,      # Максимум одновременных соединений
+        pool_timeout=30.0,              # Таймаут ожидания свободного соединения
+        read_timeout=30.0,              # Таймаут на чтение ответа
+        write_timeout=30.0,             # Таймаут на отправку
+        connect_timeout=30.0            # Таймаут на установку соединения
+    )
+
+    application = Application.builder().token(TOKEN).request(request).build()
 
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("menu", menu))
@@ -805,7 +815,7 @@ def main():
     application.add_handler(CommandHandler("ban", ban_command))
     application.add_handler(CommandHandler("unban", unban_command))
     application.add_handler(CommandHandler("banned", banned_list_command))
-    application.add_handler(CommandHandler("sync_users", sync_users))  # Новая команда
+    application.add_handler(CommandHandler("sync_users", sync_users))
 
     application.add_handler(CallbackQueryHandler(button_handler, pattern="^(news|ip|ticket|whitelist|back_to_menu|cancel_ticket|cancel_whitelist)$"))
     application.add_handler(CallbackQueryHandler(confirm_ticket, pattern="^(confirm_ticket|cancel_ticket)$"))
