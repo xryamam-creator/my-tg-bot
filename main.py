@@ -677,56 +677,28 @@ async def update_news(update: Update, context: ContextTypes.DEFAULT_TYPE):
     set_news(new_text)
     await update.message.reply_text("✅ Новости обновлены!")
 
-# ========== НОВАЯ КОМАНДА /sync_users (ИСПРАВЛЕННАЯ) ==========
-async def sync_users(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# ========== КОМАНДА ДЛЯ ПОЛЬЗОВАТЕЛЕЙ (БЕЗ MARKDOWN) ==========
+async def users_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if await check_ban(update, context):
+        return
     if update.effective_user.id != ADMIN_CHAT_ID:
         await update.message.reply_text("⛔ Нет прав.")
         return
-
-    await asyncio.sleep(0.5)
-
-    try:
-        updates = await context.bot.get_updates(limit=50, allowed_updates=["message"])
-        restored = 0
-        users = get_users()
-        for upd in updates:
-            if upd.message and upd.message.from_user:
-                user = upd.message.from_user
-                user_id = user.id
-                username = user.username or "восстановлен из истории"
-                if str(user_id) not in users:
-                    users[str(user_id)] = {
-                        "username": username,
-                        "first_seen": datetime.now().isoformat()
-                    }
-                    restored += 1
-        save_users(users)
-        await update.message.reply_text(f"✅ Восстановлено {restored} пользователей из истории сообщений.")
-    except Exception as e:
-        if "Pool timeout" in str(e):
-            await update.message.reply_text("⏳ Пул соединений занят, пробую снова через 2 секунды...")
-            await asyncio.sleep(2)
-            try:
-                updates = await context.bot.get_updates(limit=30, allowed_updates=["message"])
-                restored = 0
-                users = get_users()
-                for upd in updates:
-                    if upd.message and upd.message.from_user:
-                        user = upd.message.from_user
-                        user_id = user.id
-                        username = user.username or "восстановлен из истории"
-                        if str(user_id) not in users:
-                            users[str(user_id)] = {
-                                "username": username,
-                                "first_seen": datetime.now().isoformat()
-                            }
-                            restored += 1
-                save_users(users)
-                await update.message.reply_text(f"✅ Повторная попытка: восстановлено {restored} пользователей.")
-            except Exception as e2:
-                await update.message.reply_text(f"❌ Всё ещё ошибка: {e2}")
-        else:
-            await update.message.reply_text(f"❌ Ошибка: {e}")
+    users = get_users()
+    if not users:
+        await update.message.reply_text("📭 Нет зарегистрированных пользователей.")
+        return
+    text = "👥 Список пользователей:\n\n"
+    for uid, data in users.items():
+        username = data.get('username', 'без username')
+        first_seen = data.get('first_seen', 'неизвестно')
+        try:
+            dt = datetime.fromisoformat(first_seen)
+            first_seen = dt.strftime('%d.%m.%Y %H:%M')
+        except:
+            pass
+        text += f"ID: {uid}\nUsername: @{username}\nПервое появление: {first_seen}\n\n"
+    await update.message.reply_text(text)
 
 # ========== КОМАНДЫ ДЛЯ БАН-ЛИСТА ==========
 async def ban_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -792,29 +764,6 @@ async def banned_list_command(update: Update, context: ContextTypes.DEFAULT_TYPE
         text += f"🔹 ID: `{uid}`\n   Причина: {reason}\n   Дата: {date}\n\n"
     await update.message.reply_text(text, parse_mode="Markdown")
 
-# ========== КОМАНДА ДЛЯ ПОЛЬЗОВАТЕЛЕЙ (БЕЗ MARKDOWN) ==========
-async def users_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if await check_ban(update, context):
-        return
-    if update.effective_user.id != ADMIN_CHAT_ID:
-        await update.message.reply_text("⛔ Нет прав.")
-        return
-    users = get_users()
-    if not users:
-        await update.message.reply_text("📭 Нет зарегистрированных пользователей.")
-        return
-    text = "👥 Список пользователей:\n\n"
-    for uid, data in users.items():
-        username = data.get('username', 'без username')
-        first_seen = data.get('first_seen', 'неизвестно')
-        try:
-            dt = datetime.fromisoformat(first_seen)
-            first_seen = dt.strftime('%d.%m.%Y %H:%M')
-        except:
-            pass
-        text += f"ID: {uid}\nUsername: @{username}\nПервое появление: {first_seen}\n\n"
-    await update.message.reply_text(text)
-
 # ========== ЗАПУСК ==========
 def main():
     request = HTTPXRequest(
@@ -840,7 +789,6 @@ def main():
     application.add_handler(CommandHandler("ban", ban_command))
     application.add_handler(CommandHandler("unban", unban_command))
     application.add_handler(CommandHandler("banned", banned_list_command))
-    application.add_handler(CommandHandler("sync_users", sync_users))
 
     application.add_handler(CallbackQueryHandler(button_handler, pattern="^(news|ip|ticket|whitelist|back_to_menu|cancel_ticket|cancel_whitelist)$"))
     application.add_handler(CallbackQueryHandler(confirm_ticket, pattern="^(confirm_ticket|cancel_ticket)$"))
