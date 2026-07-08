@@ -37,7 +37,6 @@ def contains_bad_word(text):
 
 # ========== ЭКРАНИРОВАНИЕ ДЛЯ MARKDOWN ==========
 def escape_markdown(text):
-    """Экранирует специальные символы Markdown (кроме обратных кавычек)."""
     if not text:
         return ""
     escape_chars = r'_*[]()~`>#+-=|{}.!'
@@ -50,7 +49,6 @@ USERS_FILE = "users.json"
 TICKETS_FILE = "tickets.json"
 BANNED_FILE = "banned_users.json"
 
-# ---- БАН-ЛИСТ (для бота) ----
 def get_banned():
     if not os.path.exists(BANNED_FILE):
         with open(BANNED_FILE, "w", encoding="utf-8") as f:
@@ -86,7 +84,6 @@ def remove_ban(user_id):
         return True
     return False
 
-# ---- ОСТАЛЬНЫЕ ФУНКЦИИ ----
 def get_requests():
     if not os.path.exists(WHITELIST_FILE):
         with open(WHITELIST_FILE, "w", encoding="utf-8") as f:
@@ -615,15 +612,18 @@ async def announce(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not users:
         await update.message.reply_text("❌ Нет пользователей.")
         return
+    print(f"📨 Рассылка новостей: найдено {len(users)} пользователей")
     sent = 0
+    failed = 0
     for uid in users:
         try:
             await context.bot.send_message(chat_id=int(uid), text=f"📢 *НОВОСТЬ!*\n\n{escape_markdown(news_text)}", parse_mode="Markdown")
             sent += 1
             await asyncio.sleep(0.05)
-        except:
-            pass
-    await update.message.reply_text(f"✅ Разослано {sent} пользователям.")
+        except Exception as e:
+            failed += 1
+            print(f"❌ Ошибка отправки пользователю {uid}: {e}")
+    await update.message.reply_text(f"✅ Разослано {sent} пользователям. Неудачно: {failed}.")
 
 async def view_requests(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if await check_ban(update, context):
@@ -676,28 +676,30 @@ async def update_news(update: Update, context: ContextTypes.DEFAULT_TYPE):
     set_news(new_text)
     await update.message.reply_text("✅ Новости обновлены!")
 
-# ========== ИСПРАВЛЕННАЯ КОМАНДА /users (БЕЗ MARKDOWN) ==========
-async def users_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if await check_ban(update, context):
-        return
+# ========== НОВАЯ КОМАНДА /sync_users ==========
+async def sync_users(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_CHAT_ID:
         await update.message.reply_text("⛔ Нет прав.")
         return
-    users = get_users()
-    if not users:
-        await update.message.reply_text("📭 Нет зарегистрированных пользователей.")
-        return
-    text = "👥 Список пользователей:\n\n"
-    for uid, data in users.items():
-        username = data.get('username', 'без username')
-        first_seen = data.get('first_seen', 'неизвестно')
-        try:
-            dt = datetime.fromisoformat(first_seen)
-            first_seen = dt.strftime('%d.%m.%Y %H:%M')
-        except:
-            pass
-        text += f"ID: {uid}\nUsername: @{username}\nПервое появление: {first_seen}\n\n"
-    await update.message.reply_text(text)  # parse_mode по умолчанию None
+    try:
+        updates = await context.bot.get_updates(limit=100, allowed_updates=["message"])
+        restored = 0
+        users = get_users()
+        for upd in updates:
+            if upd.message and upd.message.from_user:
+                user = upd.message.from_user
+                user_id = user.id
+                username = user.username or "восстановлен из истории"
+                if str(user_id) not in users:
+                    users[str(user_id)] = {
+                        "username": username,
+                        "first_seen": datetime.now().isoformat()
+                    }
+                    restored += 1
+        save_users(users)
+        await update.message.reply_text(f"✅ Восстановлено {restored} пользователей из истории сообщений.")
+    except Exception as e:
+        await update.message.reply_text(f"❌ Ошибка: {e}")
 
 # ========== КОМАНДЫ ДЛЯ БАН-ЛИСТА ==========
 async def ban_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -751,17 +753,40 @@ async def banned_list_command(update: Update, context: ContextTypes.DEFAULT_TYPE
     if not banned:
         await update.message.reply_text("📭 Нет забаненных пользователей.")
         return
-    text = "⛔ Список забаненных пользователей:\n\n"
+    text = "⛔ *Список забаненных пользователей:*\n\n"
     for uid, data in banned.items():
-        reason = data.get('reason', 'Не указана')
+        reason = escape_markdown(data.get('reason', 'Не указана'))
         date = data.get('date', 'неизвестно')
         try:
             dt = datetime.fromisoformat(date)
             date = dt.strftime('%d.%m.%Y %H:%M')
         except:
             pass
-        text += f"ID: {uid}\nПричина: {reason}\nДата: {date}\n\n"
-    await update.message.reply_text(text)  # parse_mode None
+        text += f"🔹 ID: `{uid}`\n   Причина: {reason}\n   Дата: {date}\n\n"
+    await update.message.reply_text(text, parse_mode="Markdown")
+
+# ========== КОМАНДА ДЛЯ ПОЛЬЗОВАТЕЛЕЙ (БЕЗ MARKDOWN) ==========
+async def users_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if await check_ban(update, context):
+        return
+    if update.effective_user.id != ADMIN_CHAT_ID:
+        await update.message.reply_text("⛔ Нет прав.")
+        return
+    users = get_users()
+    if not users:
+        await update.message.reply_text("📭 Нет зарегистрированных пользователей.")
+        return
+    text = "👥 Список пользователей:\n\n"
+    for uid, data in users.items():
+        username = data.get('username', 'без username')
+        first_seen = data.get('first_seen', 'неизвестно')
+        try:
+            dt = datetime.fromisoformat(first_seen)
+            first_seen = dt.strftime('%d.%m.%Y %H:%M')
+        except:
+            pass
+        text += f"ID: {uid}\nUsername: @{username}\nПервое появление: {first_seen}\n\n"
+    await update.message.reply_text(text)
 
 # ========== ЗАПУСК ==========
 def main():
@@ -780,6 +805,7 @@ def main():
     application.add_handler(CommandHandler("ban", ban_command))
     application.add_handler(CommandHandler("unban", unban_command))
     application.add_handler(CommandHandler("banned", banned_list_command))
+    application.add_handler(CommandHandler("sync_users", sync_users))  # Новая команда
 
     application.add_handler(CallbackQueryHandler(button_handler, pattern="^(news|ip|ticket|whitelist|back_to_menu|cancel_ticket|cancel_whitelist)$"))
     application.add_handler(CallbackQueryHandler(confirm_ticket, pattern="^(confirm_ticket|cancel_ticket)$"))
