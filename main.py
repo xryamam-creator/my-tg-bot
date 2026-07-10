@@ -417,6 +417,9 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = query.from_user
     add_user(user.id, user.username)
 
+    # ОТЛАДКА: пишем в логи, какая кнопка нажата
+    print(f"🔘 Нажата кнопка: {data} от пользователя {user.id}")
+
     if data == "news":
         news_text = get_news()
         keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data="back_to_menu")]]
@@ -425,10 +428,12 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data="back_to_menu")]]
         await query.edit_message_text(f"🌐 *IP сервера:*\n`{SERVER_IP}`", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
     elif data == "ticket":
+        print("🔵 Создание тикета: устанавливаем expecting = 'ticket_reason'")
         context.user_data['expecting'] = 'ticket_reason'
         keyboard = [[InlineKeyboardButton("❌ Отмена", callback_data="cancel_ticket")]]
         await query.edit_message_text("✏️ *Создание тикета*\n\nОпишите причину обращения (или нажмите Отмена):", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
     elif data == "whitelist":
+        print("🔵 Заявка в вайтлист: начало")
         user_id = user.id
         last_req = get_last_user_request(user_id)
         if last_req and last_req["status"] == "pending":
@@ -468,6 +473,8 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     expecting = context.user_data.get('expecting')
 
     add_user(user.id, user.username)
+
+    print(f"📩 Получено сообщение от {user.id}, expecting={expecting}")
 
     if expecting == 'ticket_reason':
         if not text:
@@ -533,6 +540,8 @@ async def confirm_ticket(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try: await query.answer()
     except: pass
     data = query.data
+
+    print(f"🔄 Подтверждение тикета: {data}")
 
     if data == "confirm_ticket":
         reason = context.user_data.get('ticket_reason', "Не указана")
@@ -677,7 +686,6 @@ async def update_news(update: Update, context: ContextTypes.DEFAULT_TYPE):
     set_news(new_text)
     await update.message.reply_text("✅ Новости обновлены!")
 
-# ========== КОМАНДА ДЛЯ ПОЛЬЗОВАТЕЛЕЙ (БЕЗ MARKDOWN) ==========
 async def users_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if await check_ban(update, context):
         return
@@ -700,7 +708,6 @@ async def users_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text += f"ID: {uid}\nUsername: @{username}\nПервое появление: {first_seen}\n\n"
     await update.message.reply_text(text)
 
-# ========== КОМАНДЫ ДЛЯ БАН-ЛИСТА ==========
 async def ban_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if await check_ban(update, context):
         return
