@@ -210,7 +210,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("❌ Причина не может быть пустой. Напишите текст:")
             return
         context.user_data['ticket_reason'] = text
-        context.user_data['expecting'] = None  # сбрасываем, чтобы не мешать
+        context.user_data['expecting'] = None
         keyboard = [[InlineKeyboardButton("✅ Да, создать", callback_data="confirm_ticket"),
                      InlineKeyboardButton("❌ Нет, отмена", callback_data="cancel_ticket")]]
         await update.message.reply_text(f"✏️ *Вы ввели причину:*\n{escape_markdown(text)}\n\nПодтвердите создание тикета:", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
@@ -218,7 +218,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not text:
             await update.message.reply_text("❌ Никнейм не может быть пустым. Попробуйте снова:")
             return
-        # здесь можно добавить фильтр оскорблений
+        # фильтр оскорблений можно добавить, если нужно
         context.user_data['whitelist_name'] = text
         context.user_data['expecting'] = 'whitelist_reason'
         keyboard = [[InlineKeyboardButton("❌ Отмена", callback_data="cancel_whitelist")]]
@@ -233,9 +233,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context.user_data.clear()
             await show_main_menu(update.message)
             return
-        # Сохраняем заявку
         index = add_whitelist_request(user.id, user.username or "без username", name, text, is_change=False)
-        # Уведомляем админа
         await notify_admin_whitelist(context, user, name, text, index)
         await update.message.reply_text("✅ Ваша заявка отправлена на рассмотрение!")
         context.user_data.clear()
@@ -282,11 +280,13 @@ async def notify_admin_ticket(context, user, reason, ticket_id):
                  InlineKeyboardButton("❌ Отклонить", callback_data=f"ticket_reject_{ticket_id}")]]
     await context.bot.send_message(chat_id=ADMIN_CHAT_ID, text=text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
 
-# ---- Обработчики решений админа ----
+# ---- Обработчики решений админа (с запросом причины отклонения) ----
 async def handle_whitelist_decision(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    try: await query.answer()
-    except: pass
+    try:
+        await query.answer()
+    except:
+        pass
     data = query.data
     _, action, index_str = data.split('_')
     index = int(index_str)
@@ -305,22 +305,25 @@ async def handle_whitelist_decision(update: Update, context: ContextTypes.DEFAUL
             await context.bot.send_message(chat_id=req["user_id"], text="✅ *Поздравляем!* Вы добавлены в вайтлист!", parse_mode="Markdown")
         except:
             pass
-    else:
-        update_whitelist_request(index, "rejected", reject_reason="Отклонено администратором")
-        await query.message.reply_text("❌ Заявка отклонена.")
         try:
-            await context.bot.send_message(chat_id=req["user_id"], text="❌ Заявка отклонена.", parse_mode="Markdown")
+            await query.edit_message_reply_markup(reply_markup=None)
         except:
             pass
-    try:
-        await query.edit_message_reply_markup(reply_markup=None)
-    except:
-        pass
+    else:  # reject
+        # Сохраняем индекс и просим причину
+        context.user_data['pending_wl_reject_index'] = index
+        await query.message.reply_text("❓ Введите причину отклонения для пользователя (или /cancel_wl_reject чтобы отменить).")
+        try:
+            await query.edit_message_reply_markup(reply_markup=None)
+        except:
+            pass
 
 async def handle_ticket_decision(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    try: await query.answer()
-    except: pass
+    try:
+        await query.answer()
+    except:
+        pass
     data = query.data
     _, action, ticket_id = data.split('_')
     tickets = get_tickets()
@@ -338,17 +341,85 @@ async def handle_ticket_decision(update: Update, context: ContextTypes.DEFAULT_T
             await context.bot.send_message(chat_id=ticket["user_id"], text="✅ *Ваш тикет принят!* Администратор свяжется.", parse_mode="Markdown")
         except:
             pass
-    else:
-        update_ticket_status(ticket_id, "rejected", reject_reason="Отклонён администратором")
-        await query.message.reply_text("❌ Тикет отклонён.")
         try:
-            await context.bot.send_message(chat_id=ticket["user_id"], text="❌ Тикет отклонён.", parse_mode="Markdown")
+            await query.edit_message_reply_markup(reply_markup=None)
         except:
             pass
+    else:  # reject
+        context.user_data['pending_ticket_reject_id'] = ticket_id
+        await query.message.reply_text("❓ Введите причину отклонения для пользователя (или /cancel_ticket_reject чтобы отменить).")
+        try:
+            await query.edit_message_reply_markup(reply_markup=None)
+        except:
+            pass
+
+# ---- Обработчики причин отклонения (от админа) ----
+async def handle_wl_reject_reason(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if 'pending_wl_reject_index' not in context.user_data:
+        return
+    if update.effective_user.id != ADMIN_CHAT_ID:
+        return
+    index = context.user_data.pop('pending_wl_reject_index')
+    reason_text = update.message.text.strip()
+    if not reason_text:
+        await update.message.reply_text("❌ Причина не может быть пустой. Отправьте текст или /cancel_wl_reject.")
+        context.user_data['pending_wl_reject_index'] = index
+        return
+    update_whitelist_request(index, "rejected", reject_reason=reason_text)
+    reqs = get_whitelist_requests()
+    if index >= len(reqs):
+        await update.message.reply_text("❌ Заявка не найдена.")
+        return
+    user_id = reqs[index]["user_id"]
     try:
-        await query.edit_message_reply_markup(reply_markup=None)
-    except:
-        pass
+        await context.bot.send_message(chat_id=user_id, text=f"❌ *Ваша заявка в вайтлист отклонена.*\nПричина: {reason_text}", parse_mode="Markdown")
+        await update.message.reply_text(f"✅ Пользователь уведомлён об отказе с причиной: {reason_text}")
+    except Exception as e:
+        await update.message.reply_text(f"⚠️ Не удалось уведомить пользователя (он не начал диалог). Заявка отклонена с причиной: {reason_text}")
+
+async def handle_ticket_reject_reason(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if 'pending_ticket_reject_id' not in context.user_data:
+        return
+    if update.effective_user.id != ADMIN_CHAT_ID:
+        return
+    ticket_id = context.user_data.pop('pending_ticket_reject_id')
+    reason_text = update.message.text.strip()
+    if not reason_text:
+        await update.message.reply_text("❌ Причина не может быть пустой. Отправьте текст или /cancel_ticket_reject.")
+        context.user_data['pending_ticket_reject_id'] = ticket_id
+        return
+    update_ticket_status(ticket_id, "rejected", reject_reason=reason_text)
+    tickets = get_tickets()
+    if ticket_id not in tickets:
+        await update.message.reply_text("❌ Тикет не найден.")
+        return
+    user_id = tickets[ticket_id]["user_id"]
+    try:
+        await context.bot.send_message(chat_id=user_id, text=f"❌ *Ваш тикет отклонён.*\nПричина: {reason_text}", parse_mode="Markdown")
+        await update.message.reply_text(f"✅ Пользователь уведомлён об отказе с причиной: {reason_text}")
+    except Exception as e:
+        await update.message.reply_text(f"⚠️ Не удалось уведомить пользователя (он не начал диалог). Тикет отклонён с причиной: {reason_text}")
+
+# ---- Команды отмены для админа ----
+async def cancel_wl_reject(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_CHAT_ID:
+        await update.message.reply_text("⛔ Нет прав.")
+        return
+    if 'pending_wl_reject_index' in context.user_data:
+        context.user_data.pop('pending_wl_reject_index')
+        await update.message.reply_text("❌ Отклонение заявки отменено.")
+    else:
+        await update.message.reply_text("Нет активной операции отклонения.")
+
+async def cancel_ticket_reject(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_CHAT_ID:
+        await update.message.reply_text("⛔ Нет прав.")
+        return
+    if 'pending_ticket_reject_id' in context.user_data:
+        context.user_data.pop('pending_ticket_reject_id')
+        await update.message.reply_text("❌ Отклонение тикета отменено.")
+    else:
+        await update.message.reply_text("Нет активной операции отклонения.")
 
 # ---- Команды админа ----
 async def announce(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -405,13 +476,19 @@ def main():
     application.add_handler(CommandHandler("announce", announce))
     application.add_handler(CommandHandler("users", users_command))
     application.add_handler(CommandHandler("show_state", show_state))
+    application.add_handler(CommandHandler("cancel_wl_reject", cancel_wl_reject))
+    application.add_handler(CommandHandler("cancel_ticket_reject", cancel_ticket_reject))
 
     application.add_handler(CallbackQueryHandler(button_handler, pattern="^(news|ip|ticket|whitelist|back_to_menu|cancel_ticket|cancel_whitelist)$"))
     application.add_handler(CallbackQueryHandler(confirm_ticket, pattern="^(confirm_ticket|cancel_ticket)$"))
     application.add_handler(CallbackQueryHandler(handle_whitelist_decision, pattern="^wl_(approve|reject)_\d+$"))
     application.add_handler(CallbackQueryHandler(handle_ticket_decision, pattern="^ticket_(accept|reject)_\d+$"))
 
-    # Единственный обработчик всех текстовых сообщений (кроме команд)
+    # Обработчики причин отклонения (текстовые сообщения от админа)
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_wl_reject_reason))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_ticket_reject_reason))
+
+    # Основной обработчик текстовых сообщений (для пользователей)
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message_handler))
 
     print("🚀 Бот запущен и готов к работе!")
